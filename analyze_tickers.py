@@ -1,98 +1,136 @@
-import os
 import sys
+import os
 from typing import List
-
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 
-def chunk_list(lst: List[str], chunk_size: int) -> List[List[str]]:
-    """Split a list into chunks of a given size."""
-    return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
+# Configuration
+MODEL_NAME = "gpt-5.1"
+BATCH_SIZE = 8
+TEMPERATURE = 0.8
+SERVICE_TIER = "priority"
 
-def analyze_tickers():
+def get_llm():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        sys.stderr.write("Error: OPENAI_API_KEY environment variable not found.\n")
+        sys.exit(1)
+    
+    return ChatOpenAI(
+        model=MODEL_NAME,
+        temperature=TEMPERATURE,
+        service_tier=SERVICE_TIER,
+        api_key=api_key
+    )
+
+def chunk_tickers(tickers: List[str], size: int):
+    """Yield successive n-sized chunks from tickers."""
+    for i in range(0, len(tickers), size):
+        yield tickers[i:i + size]
+
+def process_batch(llm, tickers_batch: List[str], system_instruction: str) -> str:
+    # Step A: Description
+    step_a_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_instruction),
+        ("human", "<text>\n{tickers_multiline}\n</text>\nWhat do they do?")
+    ])
+    
+    tickers_multiline = "\n".join(tickers_batch)
+    chain_a = step_a_prompt | llm | StrOutputParser()
+    descriptions = chain_a.invoke({"tickers_multiline": tickers_multiline})
+    sys.stderr.write(f"\n[DEBUG] Batch Step A (Descriptions):\n{descriptions}\n")
+
+    # Step B: Categorization
+    step_b_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_instruction),
+        ("human", "<text>\n{descriptions}\n</text>\nCategorize them by industry")
+    ])
+    
+    chain_b = step_b_prompt | llm | StrOutputParser()
+    categorization = chain_b.invoke({"descriptions": descriptions})
+    sys.stderr.write(f"\n[DEBUG] Batch Step B (Categorization):\n{categorization}\n")
+    
+    return categorization
+
+def reduce_results(llm, all_results: List[str], system_instruction: str) -> str:
+    reduce_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_instruction),
+        ("human", "<text>\n{all_results}\n</text>\nCombine them")
+    ])
+    
+    combined_text = "\n\n".join(all_results)
+    chain_reduce = reduce_prompt | llm | StrOutputParser()
+    final_output = chain_reduce.invoke({"all_results": combined_text})
+    
+    return final_output
+
+def main():
+    # Load environment variables
     load_dotenv()
+
+    # Input handling: Check for TTY
+    if sys.stdin.isatty():
+        sys.stderr.write("Usage: echo 'TICKER1;TICKER2' | python analyze_tickers.py\n")
+        sys.exit(1)
+
+    # Read all input from stdin
+    try:
+        input_str = sys.stdin.read()
+    except Exception as e:
+        sys.stderr.write(f"Error reading input: {e}\n")
+        sys.exit(1)
+
+    # Normalize input
+    # Spec: Split by ';' (no trim/filter yet, but usually stripping the final newline of the input itself is safe, 
+    # but the spec says "Split rule: tickers = input_str.split(';') (no trim/filter)".
+    # However, if input ends with newline, the last element might be distinct.
+    # The spec is strict: "no trim/filter". I will adhere to that strictly for the splitting logic itself.
+    # But usually `input_str` might have a trailing newline from cat/echo. 
+    # I'll rely on the split as requested.
+    tickers = input_str.split(";")
     
-    # check api key
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY environment variable not set.")
+    # Filter out empty strings if they are just artifacts of trailing semi-colons or newlines if strictly desired?
+    # Spec says "no trim/filter". So I will pass them as is. 
+    # Wait, if I pass empty string to LLM it might be weird. 
+    # But "no trim/filter" implies I should respect the spec. 
+    # However, standard practice often involves removing empty inputs.
+    # I'll assume standard defensive coding for EMPTY tickers is acceptable if they are effectively whitespace.
+    # Actually, let's stick to the spec literalness for the split, but maybe the Batch logic handles it?
+    # If a ticker is "\n", passing it to LLM might be fine.
+    
+    llm = get_llm()
+    system_instruction = "You are a buy-side analyst."
+    
+    # Batch loops
+    all_step_b_results = []
+    
+    # Create chunks
+    # Note: If the split resulted in empty strings, we still process them as per spec "no filter".
+    # Iterate through batches
+    for batch in chunk_tickers(tickers, BATCH_SIZE):
+        if not batch:
+            continue
+            
+        try:
+            result = process_batch(llm, batch, system_instruction)
+            all_step_b_results.append(result)
+        except Exception as e:
+            sys.stderr.write(f"Error processing batch {batch}: {e}\n")
+            sys.exit(1)
+
+    if not all_step_b_results:
+        # If input was empty or resulted in no processing
         return
 
-    # Get input
-    print("Enter a list of ticker symbols (comma-separated):")
-    user_input = input().strip()
-    if not user_input:
-        print("No input provided.")
-        return
-
-    tickers = [t.strip() for t in user_input.split(",") if t.strip()]
-    print(f"\nProcessing {len(tickers)} tickers...")
-
-    # Initialize model
-    model = ChatOpenAI(model="gpt-4o")
-    parser = StrOutputParser()
-
-    # Define prompts
-    description_template = """What do the following companies do?
-Tickers: {tickers}
-
-Please provide a brief description for each."""
-    
-    categorization_template = """Based on the following descriptions, categorize these companies by industry.
-Descriptions:
-{descriptions}
-
-Output format:
-- Ticker: Industry (Brief Note)"""
-
-    combine_template = """Combine the following industry categorization lists into a single consolidated summary. Group them by industry.
-
-Lists:
-{categorizations}
-"""
-
-    description_prompt = PromptTemplate.from_template(description_template)
-    categorization_prompt = PromptTemplate.from_template(categorization_template)
-    combine_prompt = PromptTemplate.from_template(combine_template)
-
-    # Chains
-    desc_chain = description_prompt | model | parser
-    cat_chain = categorization_prompt | model | parser
-    combine_chain = combine_prompt | model | parser
-
-    # Process in chunks
-    chunk_size = 8
-    ticker_chunks = chunk_list(tickers, chunk_size)
-    
-    all_categorizations = []
-
-    print("\n--- Starting Batch Analysis ---")
-
-    for i, chunk in enumerate(ticker_chunks):
-        chunk_str = ", ".join(chunk)
-        print(f"\nBatch {i+1}/{len(ticker_chunks)}: {chunk_str}")
-        
-        # Step 1: Describe
-        print("  > Fetching descriptions...")
-        descriptions = desc_chain.invoke({"tickers": chunk_str})
-        
-        # Step 2: Categorize
-        print("  > Categorizing...")
-        categorization = cat_chain.invoke({"descriptions": descriptions})
-        
-        print("\n  [Batch Attempt Result]")
-        print(categorization)
-        
-        all_categorizations.append(categorization)
-
-    # Final Step: Combine
-    if all_categorizations:
-        print("\n--- Final Combined Analysis ---")
-        print("Combining results...")
-        combined_result = combine_chain.invoke({"categorizations": "\n\n".join(all_categorizations)})
-        print("\n" + combined_result)
+    # Reduce Phase
+    try:
+        final_report = reduce_results(llm, all_step_b_results, system_instruction)
+        print(final_report)
+    except Exception as e:
+        sys.stderr.write(f"Error in reduce phase: {e}\n")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    analyze_tickers()
+    main()
