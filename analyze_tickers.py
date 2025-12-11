@@ -13,7 +13,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 # --- Configuration ---
 MODEL_NAME = "gpt-5.1"
-SERVICE_TIER = "priority"
+SERVICE_TIER = "default"
 BATCH_SIZE = 8
 TEMPERATURE = 0.8
 SYSTEM_INSTRUCTION = "You are a buy-side analyst."
