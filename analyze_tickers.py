@@ -2,6 +2,7 @@ import sys
 import os
 import json
 from typing import List
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 # Load env before importing langchain to ensure key is available if already set in .env
@@ -12,15 +13,17 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 
 # --- Configuration ---
-MODEL_NAME = "gpt-5.1"
-SERVICE_TIER = "default"
+MODEL_NAME = "openai/gpt-5.2"
+MODEL_NAME_SEARCH = "x-ai/grok-4.1-fast"
+BASE_URL = "https://openrouter.ai/api/v1"
 BATCH_SIZE = 8
-TEMPERATURE = 0.8
+CONCURRENCY = 2
+TEMPERATURE = 0.7
 SYSTEM_INSTRUCTION = "You are a buy-side analyst."
 
 def check_env():
-    if not os.getenv("OPENAI_API_KEY"):
-        sys.stderr.write("Error: OPENAI_API_KEY environment variable is not set.\n")
+    if not os.getenv("OPENROUTER_API_KEY"):
+        sys.stderr.write("Error: OPENROUTER_API_KEY environment variable is not set.\n")
         sys.exit(1)
 
 def read_input() -> List[str]:
@@ -43,40 +46,33 @@ def read_input() -> List[str]:
         
     return tickers
 
+def invoke_llm(llm: ChatOpenAI, messages: List) -> str:
+    """Helper to invoke LLM and ensure string output."""
+    response = llm.invoke(messages)
+    content = response.content
+    
+    # Both models return list of dicts - extract text from items that have it
+    result = "\n".join([item["text"] for item in content if "text" in item])
+    
+    sys.stderr.write(f"[invoke_llm output]\n{result}\n[/invoke_llm output]\n")
+    return result
+
 def batched(iterable, n):
     """Yield successive n-sized chunks from iterable."""
     for i in range(0, len(iterable), n):
         yield iterable[i : i + n]
 
-def analyze_batch(tickers_batch: List[str], llm: ChatOpenAI) -> str:
-    # --- Step A: Description (Web Search Enabled) ---
+def analyze_batch(tickers_batch: List[str], llm_search: ChatOpenAI, llm: ChatOpenAI) -> str:
+    # --- Step A: Description (Web Search Enabled via Grok) ---
     tickers_multiline = "\n".join(tickers_batch)
-    
-    # We bind the native web_search tool. 
-    # Note: As of typical LangChain/OpenAI integration, pass tools in the bind method.
-    # We use the 'tools' parameter with the specific list structure for native tools.
-    llm_with_search = llm.bind(tools=[{"type": "web_search"}])
     
     messages_a = [
         SystemMessage(content=SYSTEM_INSTRUCTION),
-        HumanMessage(content=f"<text>\n{tickers_multiline}\n</text>\nWhat do they do? Search first")
+        HumanMessage(content=f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do")
     ]
     
     try:
-        # We invoke the model. It handles the tool call internally if it decides to use it.
-        # However, for 'web_search' type, newer models often return the final answer directly 
-        # after performing the search on the server side, or we might need to handle tool_calls.
-        # Given "gpt-5.1" and "web_search" (likely ChatGPT-style search), 
-        # we assume it returns the content directly or performs the generation after search.
-        # If it returns tool_calls, we might need a loop, but OpenAI 'web_search' is often automatic in recent iterations/docs.
-        # But to be safe and simple as per prompt: we get the response.
-        
-        response_a = llm_with_search.invoke(messages_a)
-        descriptions = response_a.content
-        
-        # Optional debug logging
-        sys.stderr.write(f"[DEBUG] Batch descriptions:\n{descriptions}\n")
-        
+        descriptions = invoke_llm(llm_search, messages_a)
     except Exception as e:
         sys.stderr.write(f"Error in Step A (Description): {e}\n")
         sys.exit(1)
@@ -88,12 +84,7 @@ def analyze_batch(tickers_batch: List[str], llm: ChatOpenAI) -> str:
     ]
     
     try:
-        response_b = llm.invoke(messages_b)
-        categorization = response_b.content
-        
-        # Optional debug logging
-        sys.stderr.write(f"[DEBUG] Batch categorization:\n{categorization}\n")
-        
+        categorization = invoke_llm(llm, messages_b)
         return categorization
     except Exception as e:
         sys.stderr.write(f"Error in Step B (Categorization): {e}\n")
@@ -103,20 +94,33 @@ def main():
     check_env()
     tickers = read_input()
     
-    # Initialize LLM
-    # Note: 'service_tier' may not be standard in all SDK versions yet, but request specifies it.
-    # We pass it via model_kwargs if not directly supported by constructor.
+    # Shared configuration
+    common_params = {
+        "temperature": TEMPERATURE,
+        "base_url": BASE_URL,
+        "api_key": os.getenv("OPENROUTER_API_KEY"),
+        "use_responses_api": True,
+    }
+
+    # Initialize LLMs via OpenRouter
+    llm_search = ChatOpenAI(
+        model=MODEL_NAME_SEARCH,
+        **common_params,
+        model_kwargs={"tools": [{"type": "web_search"}]},
+    )
     llm = ChatOpenAI(
-        model=MODEL_NAME, 
-        temperature=TEMPERATURE,
-        service_tier=SERVICE_TIER
+        model=MODEL_NAME,
+        **common_params,
     )
 
-    all_step_b_results = []
+    batches = list(batched(tickers, BATCH_SIZE))
     
-    for batch in batched(tickers, BATCH_SIZE):
-        result = analyze_batch(batch, llm)
-        all_step_b_results.append(result)
+    # Process batches concurrently
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+        all_step_b_results = list(executor.map(
+            lambda batch: analyze_batch(batch, llm_search, llm),
+            batches
+        ))
         
     if all_step_b_results:
         # --- Reduce / Merge Phase ---
@@ -124,14 +128,12 @@ def main():
         
         messages_reduce = [
             SystemMessage(content=SYSTEM_INSTRUCTION),
-            HumanMessage(content=f"<text>\n{all_results_str}\n</text>\nMerge them, and make sure nothing is missing")
+            HumanMessage(content=f"<text>\n{all_results_str}\n</text>\nMerge them and ensure nothing is missing")
         ]
         
         try:
             # Use high reasoning effort for the final merge step
-            llm_reduce = llm.bind(reasoning_effort="high")
-            response_reduce = llm_reduce.invoke(messages_reduce)
-            final_report = response_reduce.content
+            final_report = invoke_llm(llm.bind(reasoning={"effort": "high"}), messages_reduce)
             print(final_report)
         except Exception as e:
             sys.stderr.write(f"Error in Reduce Phase: {e}\n")
