@@ -17,7 +17,7 @@ MODEL_NAME = "openai/gpt-5.2"
 MODEL_NAME_SEARCH = "x-ai/grok-4.1-fast"
 BASE_URL = "https://openrouter.ai/api/v1"
 BATCH_SIZE = 8
-CONCURRENCY = 2
+CONCURRENCY = 4
 TEMPERATURE = 0.7
 SYSTEM_INSTRUCTION = "You are a buy-side analyst."
 
@@ -128,7 +128,7 @@ def main():
         
         messages_reduce = [
             SystemMessage(content=SYSTEM_INSTRUCTION),
-            HumanMessage(content=f"<text>\n{all_results_str}\n</text>\nMerge them and ensure nothing is missing")
+            HumanMessage(content=f"<text>\n{all_results_str}\n</text>\nMerge by sub industry. Ensure nothing is missing")
         ]
         
         try:
