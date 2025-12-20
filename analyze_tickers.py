@@ -1,29 +1,33 @@
 import sys
 import os
-import json
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
-# Load env before importing langchain to ensure key is available if already set in .env
+# Load env before importing other libs to ensure keys are available
 load_dotenv()
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import SystemMessage, HumanMessage
+from xai_sdk import Client as XAIClient
+from xai_sdk.chat import user, system
+from xai_sdk.tools import x_search, web_search
+from openai import OpenAI
 
 # --- Configuration ---
-MODEL_NAME = "openai/gpt-5.2"
-MODEL_NAME_SEARCH = "x-ai/grok-4.1-fast"
-BASE_URL = "https://openrouter.ai/api/v1"
+MODEL_GPT = "gpt-5.2"
+MODEL_GROK = "grok-4-1-fast-non-reasoning"
 BATCH_SIZE = 8
-CONCURRENCY = 4
-TEMPERATURE = 0.7
+CONCURRENCY = 8
 SYSTEM_INSTRUCTION = "You are a buy-side analyst."
 
 def check_env():
-    if not os.getenv("OPENROUTER_API_KEY"):
-        sys.stderr.write("Error: OPENROUTER_API_KEY environment variable is not set.\n")
+    missing = []
+    if not os.getenv("OPENAI_API_KEY"):
+        missing.append("OPENAI_API_KEY")
+    if not os.getenv("XAI_API_KEY"):
+        missing.append("XAI_API_KEY")
+    
+    if missing:
+        sys.stderr.write(f"Error: Missing environment variables: {', '.join(missing)}\n")
         sys.exit(1)
 
 def read_input() -> List[str]:
@@ -46,94 +50,112 @@ def read_input() -> List[str]:
         
     return tickers
 
-def invoke_llm(llm: ChatOpenAI, messages: List) -> str:
-    """Helper to invoke LLM and ensure string output."""
-    response = llm.invoke(messages)
-    content = response.content
-    
-    # Both models return list of dicts - extract text from items that have it
-    result = "\n".join([item["text"] for item in content if "text" in item])
-    
-    sys.stderr.write(f"[invoke_llm output]\n{result}\n[/invoke_llm output]\n")
-    return result
-
 def batched(iterable, n):
     """Yield successive n-sized chunks from iterable."""
     for i in range(0, len(iterable), n):
         yield iterable[i : i + n]
 
-def analyze_batch(tickers_batch: List[str], llm_search: ChatOpenAI, llm: ChatOpenAI) -> str:
+def invoke_grok(client: XAIClient, prompt: str) -> str:
+    """Invoke Grok with web search and x_search enabled."""
+    try:
+        tools = [
+            web_search(enable_image_understanding=False),
+            x_search(enable_image_understanding=False)
+        ]
+        
+        # Create chat with tools
+        chat = client.chat.create(
+            model=MODEL_GROK,
+            tools=tools
+        )
+
+        chat.append(system(SYSTEM_INSTRUCTION))
+        chat.append(user(prompt))
+        
+        # Sync call (assuming sample() is the method and it blocks)
+        response = chat.sample()
+        return response.content
+    except Exception as e:
+        sys.stderr.write(f"Error invoking Grok: {e}\n")
+        raise
+
+def invoke_gpt(client: OpenAI, prompt: str, reasoning_effort: str) -> str:
+    """Invoke GPT-5.2 with specific reasoning effort and NO tools."""
+    try:
+        # Using client.responses.create as per mini_gpt.py (adapted for sync)
+        response = client.responses.create(
+            model=MODEL_GPT,
+            input=[
+                {"role": "system", "content": SYSTEM_INSTRUCTION},
+                {"role": "user", "content": prompt}
+            ],
+            reasoning={"effort": reasoning_effort}
+            # tools parameter explicitly OMITTED
+        )
+        
+        # Extract text based on mini_gpt.py pattern
+        text = getattr(response, 'output_text', str(response))
+        return text
+    except Exception as e:
+        sys.stderr.write(f"Error invoking GPT: {e}\n")
+        raise
+
+def analyze_batch(tickers_batch: List[str], grok_client: XAIClient, gpt_client: OpenAI) -> str:
     # --- Step A: Description (Web Search Enabled via Grok) ---
     tickers_multiline = "\n".join(tickers_batch)
     
-    messages_a = [
-        SystemMessage(content=SYSTEM_INSTRUCTION),
-        HumanMessage(content=f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do")
-    ]
+    grok_prompt = f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do. Detailed yet concise"
     
     try:
-        descriptions = invoke_llm(llm_search, messages_a)
-    except Exception as e:
-        sys.stderr.write(f"Error in Step A (Description): {e}\n")
-        sys.exit(1)
-
-    # --- Step B: Categorization (No Tools) ---
-    messages_b = [
-        SystemMessage(content=SYSTEM_INSTRUCTION),
-        HumanMessage(content=f"<text>\n{descriptions}\n</text>\nCategorize them by industry")
-    ]
-    
-    try:
-        categorization = invoke_llm(llm, messages_b)
-        return categorization
-    except Exception as e:
-        sys.stderr.write(f"Error in Step B (Categorization): {e}\n")
-        sys.exit(1)
+        descriptions = invoke_grok(grok_client, grok_prompt)
+        sys.stderr.write(f"[Step A Output]\n{descriptions}\n[/Step A Output]\n")
+        return descriptions
+    except Exception:
+        return ""
 
 def main():
     check_env()
     tickers = read_input()
-    
-    # Shared configuration
-    common_params = {
-        "temperature": TEMPERATURE,
-        "base_url": BASE_URL,
-        "api_key": os.getenv("OPENROUTER_API_KEY"),
-        "use_responses_api": True,
-    }
 
-    # Initialize LLMs via OpenRouter
-    llm_search = ChatOpenAI(
-        model=MODEL_NAME_SEARCH,
-        **common_params,
-        model_kwargs={"tools": [{"type": "web_search"}]},
-    )
-    llm = ChatOpenAI(
-        model=MODEL_NAME,
-        **common_params,
-    )
+    # Initialize Clients
+    try:
+        grok_client = XAIClient(api_key=os.getenv("XAI_API_KEY"))
+        gpt_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    except Exception as e:
+        sys.stderr.write(f"Error initializing clients: {e}\n")
+        sys.exit(1)
 
     batches = list(batched(tickers, BATCH_SIZE))
     
     # Process batches concurrently
+    all_batch_results = []
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
-        all_step_b_results = list(executor.map(
-            lambda batch: analyze_batch(batch, llm_search, llm),
-            batches
-        ))
-        
-    if all_step_b_results:
-        # --- Reduce / Merge Phase ---
-        all_results_str = "\n\n".join(all_step_b_results)
-        
-        messages_reduce = [
-            SystemMessage(content=SYSTEM_INSTRUCTION),
-            HumanMessage(content=f"<text>\n{all_results_str}\n</text>\nMerge by sub industry. Ensure nothing is missing")
+        # We need to pass clients to the worker. 
+        # OpenAI and XAI clients should be thread-safe for making requests, 
+        # or we instantiate them inside? 
+        # Usually standard clients are thread-safe.
+        futures = [
+            executor.submit(analyze_batch, batch, grok_client, gpt_client) 
+            for batch in batches
         ]
         
+        for future in futures:
+            try:
+                result = future.result()
+                if result:
+                    all_batch_results.append(result)
+            except Exception as e:
+                sys.stderr.write(f"Batch execution error: {e}\n")
+
+    if all_batch_results:
+        # --- Reduce / Merge Phase ---
+        all_results_str = "\n\n".join(all_batch_results)
+        
+        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nCategorize them by what they do as finely as possible. One can be in multiple categories. Ensure no one is overlooked"
+        
         try:
-            # Use high reasoning effort for the final merge step
-            final_report = invoke_llm(llm.bind(reasoning={"effort": "high"}), messages_reduce)
+            # Step C: GPT, High Reasoning
+            final_report = invoke_gpt(gpt_client, reduce_prompt, reasoning_effort="high")
             print(final_report)
         except Exception as e:
             sys.stderr.write(f"Error in Reduce Phase: {e}\n")
