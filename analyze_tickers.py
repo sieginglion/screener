@@ -36,14 +36,17 @@ def check_env():
 
 
 def read_input() -> List[str]:
-    if sys.stdin.isatty():
-        sys.stderr.write("Usage: echo 'TICKER1;TICKER2' | python analyze_tickers.py\n")
+    if len(sys.argv) != 2:
+        sys.stderr.write("Usage: python analyze_tickers.py <file>\n")
         sys.exit(1)
 
+    filename = sys.argv[1]
+
     try:
-        input_str = sys.stdin.read()
+        with open(filename, "r") as f:
+            input_str = f.read()
     except Exception as e:
-        sys.stderr.write(f"Error reading from stdin: {e}\n")
+        sys.stderr.write(f"Error reading file '{filename}': {e}\n")
         sys.exit(1)
 
     raw_tickers = input_str.split(";")
@@ -65,10 +68,7 @@ def batched(iterable, n):
 def invoke_grok(client: XAIClient, prompt: str) -> str:
     """Invoke Grok with web search and x_search enabled."""
     try:
-        tools = [
-            web_search(enable_image_understanding=False),
-            x_search(enable_image_understanding=False),
-        ]
+        tools = [web_search(), x_search()]
 
         # Create chat with tools
         chat = client.chat.create(model=MODEL_GROK, tools=tools)
@@ -107,12 +107,12 @@ def invoke_gpt(client: OpenAI, prompt: str, reasoning_effort: str) -> str:
 
 
 def analyze_batch(
-    tickers_batch: List[str], grok_client: XAIClient, gpt_client: OpenAI
+    tickers_batch: List[str], grok_client: XAIClient, language_suffix: str
 ) -> str:
     # --- Step A: Description (Web Search Enabled via Grok) ---
     tickers_multiline = "\n".join(tickers_batch)
 
-    grok_prompt = f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do. Detailed yet concise"
+    grok_prompt = f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do. Detailed yet concise{language_suffix}"
 
     try:
         descriptions = invoke_grok(grok_client, grok_prompt)
@@ -135,6 +135,9 @@ def main():
         sys.exit(1)
 
     batches = list(batched(tickers, BATCH_SIZE))
+    language_suffix = ""
+    if tickers and tickers[0][:1].isdecimal():
+        language_suffix = ". In Taiwan Chinese"
 
     # Process batches concurrently
     all_batch_results = []
@@ -144,7 +147,7 @@ def main():
         # or we instantiate them inside?
         # Usually standard clients are thread-safe.
         futures = [
-            executor.submit(analyze_batch, batch, grok_client, gpt_client)
+            executor.submit(analyze_batch, batch, grok_client, language_suffix)
             for batch in batches
         ]
 
@@ -160,7 +163,7 @@ def main():
         # --- Reduce / Merge Phase ---
         all_results_str = "\n\n".join(all_batch_results)
 
-        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nCategorize them by what they do as finely as possible. One can be in multiple categories. Ensure no one is overlooked"
+        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nGroup them by what they do as finely as possible. One can be in multiple groups. Ensure no one is overlooked{language_suffix}"
 
         try:
             # Step C: GPT, High Reasoning

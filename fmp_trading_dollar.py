@@ -9,9 +9,9 @@ import httpx
 from dotenv import load_dotenv
 
 FMP_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
-THREADS = 8
-LOOKBACK_DAYS = 14
-LAST_N = 7
+THREADS = 2
+LOOKBACK_DAYS = 21
+LAST_N = 10
 
 
 def read_symbols(path):

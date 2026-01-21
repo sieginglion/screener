@@ -9,9 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from FinMind.data import DataLoader
 
-THREADS = 1
-LOOKBACK_DAYS = 14
-LAST_N = 7
+THREADS = 8
+LOOKBACK_DAYS = 21
+LAST_N = 10
 
 
 def read_symbols(path):
