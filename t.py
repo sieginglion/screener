@@ -148,8 +148,7 @@ def fetch_symbols_from_tv():
         response.raise_for_status()
         data = response.json()
         return [
-            (item["d"][0]["name"], item["d"][0]["description"])
-            for item in data["data"]
+            (item["d"][0]["name"], item["d"][0]["description"]) for item in data["data"]
         ]
 
 
@@ -160,7 +159,7 @@ def fetch_trading_dollar(api, stock_id, description, start, end):
         end_date=end,
     )
     total = df.sort_values("date", ascending=False).head(LAST_N)["Trading_money"].sum()
-    return description, float(total)
+    return f"{stock_id} {description}", float(total)
 
 
 def main():
