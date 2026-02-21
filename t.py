@@ -12,9 +12,10 @@ from FinMind.data import DataLoader
 TV_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 
 THREADS = 8
-LOOKBACK_DAYS = 21
+LOOKBACK_DAYS = 28
 LAST_N = 10
 TOP_N_SYMBOLS = 512
+TOP_N_RESULTS = 128
 
 TV_HEADERS = {
     "accept": "application/json",
@@ -144,8 +145,7 @@ TV_PAYLOAD = {
 
 def fetch_symbols_from_tv():
     with httpx.Client() as client:
-        response = client.post(TV_URL, headers=TV_HEADERS, json=TV_PAYLOAD, timeout=30)
-        response.raise_for_status()
+        response = client.post(TV_URL, headers=TV_HEADERS, json=TV_PAYLOAD)
         data = response.json()
         return [
             (item["d"][0]["name"], item["d"][0]["description"]) for item in data["data"]
@@ -159,7 +159,7 @@ def fetch_trading_dollar(api, stock_id, description, start, end):
         end_date=end,
     )
     total = df.sort_values("date", ascending=False).head(LAST_N)["Trading_money"].sum()
-    return f"{stock_id} {description}", float(total)
+    return stock_id, description, float(total)
 
 
 def main():
@@ -183,12 +183,13 @@ def main():
             )
         )
 
-    results = sorted(results, key=lambda x: x[1], reverse=True)
+    results = sorted(results, key=lambda x: x[2], reverse=True)[:TOP_N_RESULTS]
 
     writer = csv.writer(sys.stdout, delimiter=";")
-    writer.writerow(["description", "total_trading_dollar"])
-    for description, total in results:
-        writer.writerow([description, f"{total:.2f}"])
+    writer.writerow(["symbol", "description", "dollar"])
+    # for symbol, description, total in filtered_results:
+    for symbol, description, total in results:
+        writer.writerow([symbol, description, f"{total:.2f}"])
 
 
 if __name__ == "__main__":

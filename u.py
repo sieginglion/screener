@@ -3,6 +3,7 @@ import csv
 import datetime as dt
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -12,9 +13,10 @@ FMP_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 TV_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 
 THREADS = 2
-LOOKBACK_DAYS = 21
-LAST_N = 10
-TOP_N_SYMBOLS = 512
+LOOKBACK_DAYS = 14
+LAST_N = 5
+TOP_N_SYMBOLS = 256
+TOP_N_RESULTS = 128
 
 TV_HEADERS = {
     "accept": "application/json",
@@ -144,8 +146,7 @@ TV_PAYLOAD = {
 
 def fetch_symbols_from_tv():
     with httpx.Client() as client:
-        response = client.post(TV_URL, headers=TV_HEADERS, json=TV_PAYLOAD, timeout=30)
-        response.raise_for_status()
+        response = client.post(TV_URL, headers=TV_HEADERS, json=TV_PAYLOAD)
         data = response.json()
         return [
             (item["d"][0]["name"].replace(".", "-"), item["d"][0]["description"])
@@ -157,14 +158,12 @@ def fetch_trading_dollar(symbol, description, from_date, api_key):
     r = httpx.get(
         FMP_URL,
         params={"symbol": symbol, "from": from_date, "apikey": api_key},
-        timeout=30,
     )
-    r.raise_for_status()
 
     rows = sorted(r.json(), key=lambda x: x["date"], reverse=True)[:LAST_N]
     total = sum(float(row["vwap"]) * float(row["volume"]) for row in rows)
 
-    return description, total
+    return symbol, description, total
 
 
 def main():
@@ -185,12 +184,29 @@ def main():
             )
         )
 
-    results = sorted(results, key=lambda x: x[1], reverse=True)
+    results = sorted(results, key=lambda x: x[2], reverse=True)[:TOP_N_RESULTS]
+
+    # # Filter by querying localhost endpoint
+    # print("Filtering via localhost endpoint...", file=sys.stderr)
+    # filtered_results = []
+    # with httpx.Client() as client:
+    #     for symbol, description, total in results:
+    #         try:
+    #             r = client.get(
+    #                 "http://localhost:8080/px-score",
+    #                 params={"market": "u", "symbol": symbol, "q": 4},
+    #             )
+    #             if float(r.text) < 0.75:
+    #                 filtered_results.append((symbol, description, total))
+    #         except Exception:
+    #             print(f"px-score error: {symbol}", file=sys.stderr)
+    #         time.sleep(1)
 
     writer = csv.writer(sys.stdout, delimiter=";")
-    writer.writerow(["description", "total_trading_dollar"])
-    for description, total in results:
-        writer.writerow([description, f"{total:.2f}"])
+    writer.writerow(["symbol", "description", "dollar"])
+    # for symbol, description, total in filtered_results:
+    for symbol, description, total in results:
+        writer.writerow([symbol, description, f"{total:.2f}"])
 
 
 if __name__ == "__main__":
