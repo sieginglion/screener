@@ -36,18 +36,10 @@ def check_env():
 
 
 def read_input() -> List[str]:
-    if len(sys.argv) != 2:
-        sys.stderr.write("Usage: python analyze_tickers.py <file>\n")
+    if len(sys.argv) != 1:
+        sys.stderr.write("Usage: python analyze_tickers.py < stdin\n")
         sys.exit(1)
-
-    filename = sys.argv[1]
-
-    try:
-        with open(filename, "r") as f:
-            input_str = f.read()
-    except Exception as e:
-        sys.stderr.write(f"Error reading file '{filename}': {e}\n")
-        sys.exit(1)
+    input_str = sys.stdin.read()
 
     raw_tickers = input_str.split(";")
     tickers = [t.strip() for t in raw_tickers]

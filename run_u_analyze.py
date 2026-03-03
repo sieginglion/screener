@@ -387,13 +387,21 @@ def chunked(items: Sequence[str], size: int) -> List[List[str]]:
 
 def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
     """Run analyze_tickers.py for one chunk via stdin and return stdout."""
-    proc = subprocess.run(
-        [PYTHON_BIN, "analyze_tickers.py"],
-        input=";".join(ticker_company_pairs),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        proc = subprocess.run(
+            [PYTHON_BIN, "analyze_tickers.py"],
+            input=";".join(ticker_company_pairs),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            sys.stderr.write(exc.stderr)
+        raise
+
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
     return proc.stdout
 
 
