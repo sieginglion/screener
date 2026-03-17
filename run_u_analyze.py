@@ -5,22 +5,35 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 import httpx
 from dotenv import load_dotenv
+
+from config import (
+    CHUNK_NUMS,
+    CHUNK_SIZE,
+    FINMIND_THREADS,
+    FMP_THREADS,
+    LAST_N,
+    LOOKBACK_DAYS,
+    MARGIN,
+    MARKET,
+    TV_SORT_WINDOW,
+)
 
 FMP_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 
 PYTHON_BIN = sys.executable
-CHUNK_SIZE = 64
-CHUNK_NUMS = 2
-THREADS = 2
-LOOKBACK_DAYS = 28
-LAST_N = 5
-MARGIN = 4
-MARKET = "u"  # Set to "u" (america) or "t" (taiwan)
+
+
+def today_for_market() -> dt.date:
+    if MARKET == "t":
+        return dt.datetime.now(ZoneInfo("Asia/Taipei")).date()
+    return dt.datetime.now(ZoneInfo("America/New_York")).date()
+
 
 TV_US_HEADERS = {
     "accept": "application/json",
@@ -46,7 +59,7 @@ TV_US_PAYLOAD = {
     "ignore_unknown_fields": False,
     "options": {"lang": "en"},
     "range": [0, CHUNK_SIZE * CHUNK_NUMS * MARGIN],
-    "sort": {"sortBy": "Value.Traded|1W", "sortOrder": "desc"},
+    "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["america"],
     "filter2": {
@@ -170,7 +183,7 @@ TV_TW_PAYLOAD = {
     "ignore_unknown_fields": False,
     "options": {"lang": "zh_TW"},
     "range": [0, CHUNK_SIZE * CHUNK_NUMS * MARGIN],
-    "sort": {"sortBy": "Value.Traded|1W", "sortOrder": "desc"},
+    "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["taiwan"],
     "filter2": {
@@ -317,9 +330,9 @@ def load_top_company_names_us(
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
-    from_date = (dt.date.today() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
+    from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
-    with ThreadPoolExecutor(max_workers=THREADS) as pool:
+    with ThreadPoolExecutor(max_workers=FMP_THREADS) as pool:
         results = list(
             pool.map(
                 lambda s: fetch_trading_dollar_us(s[0], s[1], from_date, api_key),
@@ -362,12 +375,12 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
-    today = dt.date.today()
+    today = today_for_market()
     start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     end = today.isoformat()
 
     sys.stderr.write("Fetching trading dollar data from FinMind...\n")
-    with ThreadPoolExecutor(max_workers=THREADS) as pool:
+    with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
         results = list(
             pool.map(
                 lambda s: fetch_trading_dollar_tw(api, s[0], s[1], start, end),
@@ -379,6 +392,14 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
     return [
         f"{symbol} {description.replace(';', ',')}" for symbol, description, _ in top
     ]
+
+
+def load_top_company_names(
+    api_key: str | None, top_n_symbols: int, top_n_results: int
+) -> List[str]:
+    if MARKET == "t":
+        return load_top_company_names_tw(top_n_symbols, top_n_results)
+    return load_top_company_names_us(api_key, top_n_symbols, top_n_results)
 
 
 def chunked(items: Sequence[str], size: int) -> List[List[str]]:
@@ -407,18 +428,10 @@ def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
 
 def main() -> int:
     load_dotenv()
-    market = "taiwan" if MARKET == "t" else "america"
-
     top_n_results = CHUNK_SIZE * CHUNK_NUMS
     top_n_symbols = top_n_results * MARGIN
-
-    if market == "taiwan":
-        ticker_company_pairs = load_top_company_names_tw(top_n_symbols, top_n_results)
-    else:
-        api_key = os.environ.get("FMP_API_KEY")
-        ticker_company_pairs = load_top_company_names_us(
-            api_key, top_n_symbols, top_n_results
-        )
+    api_key = os.environ.get("FMP_API_KEY")
+    ticker_company_pairs = load_top_company_names(api_key, top_n_symbols, top_n_results)
 
     parts = chunked(ticker_company_pairs, CHUNK_SIZE)
 

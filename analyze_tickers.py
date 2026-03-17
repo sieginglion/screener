@@ -104,7 +104,7 @@ def analyze_batch(
     # --- Step A: Description (Web Search Enabled via Grok) ---
     tickers_multiline = "\n".join(tickers_batch)
 
-    grok_prompt = f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do. Detailed yet concise{language_suffix}"
+    grok_prompt = f"<text>\n{tickers_multiline}\n</text>\nSearch then tell me what they do. Detailed yet concise. Include ticker symbol and company name{language_suffix}"
 
     try:
         descriptions = invoke_grok(grok_client, grok_prompt)
@@ -155,7 +155,7 @@ def main():
         # --- Reduce / Merge Phase ---
         all_results_str = "\n\n".join(all_batch_results)
 
-        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nGroup them by what they do as finely as possible. One can be in multiple groups. Ensure no one is overlooked{language_suffix}"
+        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nGroup them by what they do as finely as possible. One can be in multiple groups. Ensure no one is overlooked. Include ticker symbol and company name{language_suffix}"
 
         try:
             # Step C: GPT, High Reasoning
