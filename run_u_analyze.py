@@ -11,13 +11,13 @@ import httpx
 from dotenv import load_dotenv
 
 from config import (
+    CANDIDATE_POOL_MULTIPLIER,
     CHUNK_NUMS,
     CHUNK_SIZE,
     FINMIND_THREADS,
     FMP_THREADS,
     LAST_N,
     LOOKBACK_DAYS,
-    MARGIN,
     MARKET,
     TV_SORT_WINDOW,
 )
@@ -58,7 +58,7 @@ TV_US_PAYLOAD = {
     # "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
     "ignore_unknown_fields": False,
     "options": {"lang": "en"},
-    "range": [0, CHUNK_SIZE * CHUNK_NUMS * MARGIN],
+    "range": [0, CHUNK_SIZE * CHUNK_NUMS * CANDIDATE_POOL_MULTIPLIER],
     "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["america"],
@@ -182,7 +182,7 @@ TV_TW_PAYLOAD = {
     "columns": ["ticker-view"],
     "ignore_unknown_fields": False,
     "options": {"lang": "zh_TW"},
-    "range": [0, CHUNK_SIZE * CHUNK_NUMS * MARGIN],
+    "range": [0, CHUNK_SIZE * CHUNK_NUMS * CANDIDATE_POOL_MULTIPLIER],
     "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["taiwan"],
@@ -429,7 +429,7 @@ def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
 def main() -> int:
     load_dotenv()
     top_n_results = CHUNK_SIZE * CHUNK_NUMS
-    top_n_symbols = top_n_results * MARGIN
+    top_n_symbols = top_n_results * CANDIDATE_POOL_MULTIPLIER
     api_key = os.environ.get("FMP_API_KEY")
     ticker_company_pairs = load_top_company_names(api_key, top_n_symbols, top_n_results)
 
