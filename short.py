@@ -2,11 +2,12 @@
 import json
 import os
 import sys
+import time
 
 import httpx
 from dotenv import load_dotenv
 
-from config import CANDIDATE_POOL_MULTIPLIER, MARKET, RESULT_LIMIT, Q
+from config import CANDIDATE_POOL_MULTIPLIER, MARKET, RESULT_LIMIT, Q, SCORES_SLEEP
 from run_u_analyze import load_top_company_names, today_for_market
 
 
@@ -24,7 +25,7 @@ def effective_score(score_tuple: tuple[float, float | None]) -> float:
 
 def fetch_symbol_score(
     symbol: str, description: str, end_date: str
-) -> tuple[str, str, float, float, float | None]:
+) -> tuple[str, str, float, float, float | None] | None:
     with httpx.Client() as client:
         response = client.get(
             "http://localhost:8080/scores",
@@ -35,7 +36,13 @@ def fetch_symbol_score(
                 "q": Q,
             },
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            if response.status_code == 500:
+                sys.stderr.write(f"Skipping {symbol}: score service returned 500\n")
+                return None
+            raise
 
     first, second = parse_score_tuple(response.text)
     return symbol, description, effective_score((first, second)), first, second
@@ -45,8 +52,12 @@ def iter_symbol_scores_sequentially(
     stocks: list[tuple[str, str]], end_date: str
 ) -> list[tuple[str, str, float, float, float | None]]:
     results: list[tuple[str, str, float, float, float | None]] = []
-    for symbol, description in stocks:
-        results.append(fetch_symbol_score(symbol, description, end_date))
+    for index, (symbol, description) in enumerate(stocks):
+        result = fetch_symbol_score(symbol, description, end_date)
+        if result is not None:
+            results.append(result)
+        if index < len(stocks) - 1:
+            time.sleep(SCORES_SLEEP)
     return results
 
 
