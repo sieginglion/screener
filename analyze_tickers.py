@@ -159,7 +159,7 @@ def main():
         try:
             # Step C: GPT, High Reasoning
             final_report = invoke_gpt(
-                gpt_client, reduce_prompt, reasoning_effort="medium"
+                gpt_client, reduce_prompt, reasoning_effort="high"
             )
             print(final_report)
         except Exception as e:
