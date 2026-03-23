@@ -14,7 +14,7 @@ from xai_sdk.chat import system, user
 from xai_sdk.tools import web_search, x_search
 
 # --- Configuration ---
-MODEL_GPT = "gpt-5.2"
+MODEL_GPT = "gpt-5.4"
 MODEL_GROK = "grok-4-1-fast-non-reasoning"
 BATCH_SIZE = 8
 CONCURRENCY = 8
@@ -41,9 +41,8 @@ def read_input() -> List[str]:
         sys.exit(1)
     input_str = sys.stdin.read()
 
-    raw_tickers = input_str.split(";")
-    tickers = [t.strip() for t in raw_tickers]
-    tickers = [t for t in tickers if t]  # Drop empty strings
+    raw_tickers = input_str.strip().splitlines()
+    tickers = [t.split(";", 1)[0] for t in raw_tickers]
 
     if not tickers:
         sys.exit(0)

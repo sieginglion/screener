@@ -411,7 +411,7 @@ def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
     try:
         proc = subprocess.run(
             [PYTHON_BIN, "analyze_tickers.py"],
-            input=";".join(ticker_company_pairs),
+            input="\n".join(ticker_company_pairs),
             capture_output=True,
             text=True,
             check=True,

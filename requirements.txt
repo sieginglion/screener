@@ -1,5 +1,5 @@
-langchain-core
-langchain-openai
-langchain>=0.3.0
-openai>=1.50.0
+FinMind
+httpx
+openai
 python-dotenv
+xai-sdk

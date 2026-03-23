@@ -7,7 +7,7 @@ import time
 import httpx
 from dotenv import load_dotenv
 
-from config import CANDIDATE_POOL_MULTIPLIER, MARKET, RESULT_LIMIT, Q, SCORES_SLEEP
+from config import CANDIDATE_POOL_MULTIPLIER, MARKET, RESULT_LIMIT, SCORES_SLEEP, Q
 from run_u_analyze import load_top_company_names, today_for_market
 
 
@@ -20,7 +20,8 @@ def effective_score(score_tuple: tuple[float, float | None]) -> float:
     first, second = score_tuple
     if second is None:
         return first
-    return (first + second) / 2.0
+    # return (first + second) / 2.0
+    return max(first, second)
 
 
 def fetch_symbol_score(
@@ -80,7 +81,7 @@ def main() -> int:
 
     for symbol, description, score, first, second in results:
         second_text = "" if second is None else f"{second:.6f}"
-        print(f"{symbol};{description};{score:.6f};{first:.6f};{second_text}")
+        print(f"{symbol} {description};{score:.6f};{first:.6f};{second_text}")
 
     return 0
 
