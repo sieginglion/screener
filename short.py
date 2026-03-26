@@ -20,8 +20,8 @@ def effective_score(score_tuple: tuple[float, float | None]) -> float:
     first, second = score_tuple
     if second is None:
         return first
-    # return (first + second) / 2.0
-    return max(first, second)
+    return (first + second) / 2.0
+    # return max(first, second)
 
 
 def fetch_symbol_score(
