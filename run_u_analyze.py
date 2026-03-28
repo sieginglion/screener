@@ -12,13 +12,13 @@ from dotenv import load_dotenv
 
 from config import (
     CANDIDATE_POOL_MULTIPLIER,
-    CHUNK_NUMS,
     CHUNK_SIZE,
     FINMIND_THREADS,
     FMP_THREADS,
     LAST_N,
     LOOKBACK_DAYS,
     MARKET,
+    RESULT_LIMIT,
     TV_SORT_WINDOW,
 )
 
@@ -58,7 +58,7 @@ TV_US_PAYLOAD = {
     # "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
     "ignore_unknown_fields": False,
     "options": {"lang": "en"},
-    "range": [0, CHUNK_SIZE * CHUNK_NUMS * CANDIDATE_POOL_MULTIPLIER],
+    "range": [0, RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER],
     "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["america"],
@@ -182,7 +182,7 @@ TV_TW_PAYLOAD = {
     "columns": ["ticker-view"],
     "ignore_unknown_fields": False,
     "options": {"lang": "zh_TW"},
-    "range": [0, CHUNK_SIZE * CHUNK_NUMS * CANDIDATE_POOL_MULTIPLIER],
+    "range": [0, RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER],
     "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["taiwan"],
@@ -330,6 +330,12 @@ def load_top_company_names_us(
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
+    if top_n_symbols <= top_n_results:
+        return [
+            f"{symbol} {description.replace(';', ',')}"
+            for symbol, description in stocks
+        ]
+
     from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
     with ThreadPoolExecutor(max_workers=FMP_THREADS) as pool:
@@ -374,6 +380,12 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
         top_n_symbols=top_n_symbols,
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
+
+    if top_n_symbols <= top_n_results:
+        return [
+            f"{symbol} {description.replace(';', ',')}"
+            for symbol, description in stocks
+        ]
 
     today = today_for_market()
     start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
@@ -428,10 +440,10 @@ def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
 
 def main() -> int:
     load_dotenv()
-    top_n_results = CHUNK_SIZE * CHUNK_NUMS
-    top_n_symbols = top_n_results * CANDIDATE_POOL_MULTIPLIER
     api_key = os.environ.get("FMP_API_KEY")
-    ticker_company_pairs = load_top_company_names(api_key, top_n_symbols, top_n_results)
+    ticker_company_pairs = load_top_company_names(
+        api_key, RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER, RESULT_LIMIT
+    )
 
     parts = chunked(ticker_company_pairs, CHUNK_SIZE)
 
