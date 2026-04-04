@@ -18,7 +18,7 @@ MODEL_GPT = "gpt-5.4"
 MODEL_GROK = "grok-4-1-fast-non-reasoning"
 BATCH_SIZE = 8
 CONCURRENCY = 8
-SYSTEM_INSTRUCTION = "You are a buy-side analyst."
+SYSTEM_INSTRUCTION = "You are an equity research analyst."
 
 
 def check_env():

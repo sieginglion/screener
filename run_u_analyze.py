@@ -4,10 +4,14 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
+from inspect import iscoroutinefunction
+from pathlib import Path
 from typing import Any, List, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 import httpx
+from diskcache import Cache
 from dotenv import load_dotenv
 
 from config import (
@@ -27,6 +31,36 @@ TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 
 PYTHON_BIN = sys.executable
+cache = Cache(Path().resolve() / '.cache')
+
+
+def cached(ttl):
+    def decorator(f):
+        if iscoroutinefunction(f):
+
+            @wraps(f)
+            async def async_wrapper(*args, **kwargs):
+                k = (f.__module__, f.__qualname__, args, tuple(sorted(kwargs.items())))
+                if k in cache:
+                    return cache[k]
+                v = await f(*args, **kwargs)
+                cache.set(k, v, ttl)
+                return v
+
+            return async_wrapper
+
+        @wraps(f)
+        def sync_wrapper(*args, **kwargs):
+            k = (f.__module__, f.__qualname__, args, tuple(sorted(kwargs.items())))
+            if k in cache:
+                return cache[k]
+            v = f(*args, **kwargs)
+            cache.set(k, v, ttl)
+            return v
+
+        return sync_wrapper
+
+    return decorator
 
 
 def today_for_market() -> dt.date:
@@ -406,6 +440,7 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
     ]
 
 
+@cached(3600)
 def load_top_company_names(
     api_key: str | None, top_n_symbols: int, top_n_results: int
 ) -> List[str]:
