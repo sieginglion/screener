@@ -12,16 +12,15 @@ from config import CANDIDATE_POOL_MULTIPLIER, MARKET, PEAK_CUTOFF_RATIO, RESULT_
 from run_u_analyze import load_top_company_names
 
 
-def parse_score_tuple(body: str) -> tuple[float, float | None]:
-    first, second = json.loads(body)
-    return float(first), None if second is None else float(second)
+def parse_score_response(body: str) -> tuple[float, float, float]:
+    first_raw, second_raw = json.loads(body)
+    if second_raw is None:
+        raise ValueError("score service returned null second score")
 
-
-def effective_score(score_tuple: tuple[float, float | None]) -> float:
-    first, second = score_tuple
-    if second is None:
-        return first
-    return (first + second) / 2.0
+    first = float(first_raw)
+    second = float(second_raw)
+    score = (first + second) / 2.0
+    return score, first, second
 
 
 def cutoff_count(size: int) -> int:
@@ -58,8 +57,7 @@ def fetch_score(client: httpx.Client, symbol: str) -> tuple[float, float, float 
             raise ValueError("score service returned 500") from None
         raise
 
-    first, second = parse_score_tuple(response.text)
-    return effective_score((first, second)), first, second
+    return parse_score_response(response.text)
 
 
 def main() -> int:

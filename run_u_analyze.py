@@ -18,7 +18,6 @@ from config import (
     CANDIDATE_POOL_MULTIPLIER,
     CHUNK_SIZE,
     FINMIND_THREADS,
-    FMP_THREADS,
     LAST_N,
     LOOKBACK_DAYS,
     MARKET,
@@ -340,6 +339,7 @@ def fetch_symbols_from_tv(
         ]
 
 
+@cached(43200)
 def fetch_trading_dollar_us(
     symbol: str, description: str, from_date: str, api_key: str
 ) -> Tuple[str, str, float]:
@@ -372,13 +372,10 @@ def load_top_company_names_us(
 
     from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
-    with ThreadPoolExecutor(max_workers=FMP_THREADS) as pool:
-        results = list(
-            pool.map(
-                lambda s: fetch_trading_dollar_us(s[0], s[1], from_date, api_key),
-                stocks,
-            )
-        )
+    results = [
+        fetch_trading_dollar_us(symbol, description, from_date, api_key)
+        for symbol, description in stocks
+    ]
 
     top = sorted(results, key=lambda x: x[2], reverse=True)[:top_n_results]
     return [
@@ -440,7 +437,6 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
     ]
 
 
-@cached(3600)
 def load_top_company_names(
     api_key: str | None, top_n_symbols: int, top_n_results: int
 ) -> List[str]:
