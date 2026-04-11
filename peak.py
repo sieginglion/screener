@@ -9,18 +9,14 @@ import httpx
 from dotenv import load_dotenv
 
 from config import CANDIDATE_POOL_MULTIPLIER, MARKET, PEAK_CUTOFF_RATIO, RESULT_LIMIT, Q
-from run_u_analyze import load_top_company_names
+from run_u_analyze import cached, load_top_company_names
 
 
 def parse_score_response(body: str) -> tuple[float, float, float]:
-    first_raw, second_raw = json.loads(body)
-    if second_raw is None:
+    first, second = json.loads(body)
+    if second is None:
         raise ValueError("score service returned null second score")
-
-    first = float(first_raw)
-    second = float(second_raw)
-    score = (first + second) / 2.0
-    return score, first, second
+    return (first + second) / 2, first, second
 
 
 def cutoff_count(size: int) -> int:
@@ -29,34 +25,33 @@ def cutoff_count(size: int) -> int:
     return max(1, math.ceil(size * PEAK_CUTOFF_RATIO))
 
 
-def fetch_growth(client: httpx.Client, symbol: str) -> float:
-    response = client.get(
+@cached(43200)
+def fetch_growth(symbol: str) -> float:
+    response = httpx.get(
         "http://localhost:8080/growth",
         params={
             "market": MARKET,
             "symbol": symbol,
         },
+        timeout=30.0,
     )
     response.raise_for_status()
-    return float(response.text.strip())
+    return float(response.text)
 
 
-def fetch_score(client: httpx.Client, symbol: str) -> tuple[float, float, float | None]:
-    response = client.get(
+@cached(43200)
+def fetch_score(symbol: str) -> tuple[float, float, float | None]:
+    time.sleep(0.5)
+    response = httpx.get(
         "http://localhost:8080/scores",
         params={
             "market": MARKET,
             "symbol": symbol,
             "q": Q,
         },
+        timeout=30.0,
     )
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError:
-        if response.status_code == 500:
-            raise ValueError("score service returned 500") from None
-        raise
-
+    response.raise_for_status()
     return parse_score_response(response.text)
 
 
@@ -77,14 +72,13 @@ def main() -> int:
 
     sys.stderr.write(f"Fetching growth for {len(stocks)} stocks...\n")
     growth_results: list[tuple[str, str, float]] = []
-    with httpx.Client(timeout=30.0) as client:
-        for index, (symbol, description) in enumerate(stocks, start=1):
-            try:
-                growth = fetch_growth(client, symbol)
-            except Exception as exc:
-                sys.stderr.write(f"Skipping {symbol}: {exc}\n")
-            else:
-                growth_results.append((symbol, description, growth))
+    for index, (symbol, description) in enumerate(stocks, start=1):
+        try:
+            growth = fetch_growth(symbol)
+        except Exception as exc:
+            sys.stderr.write(f"Skipping {symbol}: {exc}\n")
+        else:
+            growth_results.append((symbol, description, growth))
 
     growth_cutoff = cutoff_count(len(stocks))
     growth_results.sort(key=lambda item: item[2], reverse=True)
@@ -95,19 +89,13 @@ def main() -> int:
 
     sys.stderr.write(f"Scoring top {len(top_growth)} stocks by growth...\n")
     final_results: list[tuple[str, str, float, float, float, float | None]] = []
-    with httpx.Client(timeout=30.0) as client:
-        for index, (symbol, description, growth) in enumerate(top_growth, start=1):
-            try:
-                score, first, second = fetch_score(client, symbol)
-            except Exception as exc:
-                sys.stderr.write(f"Skipping {symbol}: {exc}\n")
-            else:
-                final_results.append(
-                    (symbol, description, growth, score, first, second)
-                )
-
-            if index < len(top_growth):
-                time.sleep(0.5)
+    for index, (symbol, description, growth) in enumerate(top_growth, start=1):
+        try:
+            score, first, second = fetch_score(symbol)
+        except Exception as exc:
+            sys.stderr.write(f"Skipping {symbol}: {exc}\n")
+        else:
+            final_results.append((symbol, description, growth, score, first, second))
 
     score_cutoff = cutoff_count(len(top_growth))
     final_results.sort(key=lambda item: item[3])
