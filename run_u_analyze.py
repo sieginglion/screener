@@ -343,13 +343,12 @@ def fetch_symbols_from_tv(
 def fetch_trading_dollar_us(
     symbol: str, description: str, from_date: str, api_key: str
 ) -> Tuple[str, str, float]:
-    response = httpx.get(
-        FMP_URL,
-        params={"symbol": symbol, "from": from_date, "apikey": api_key},
+    res = httpx.get(
+        FMP_URL, params={"symbol": symbol, "from": from_date, "apikey": api_key}
     )
-    rows = sorted(response.json(), key=lambda x: x["date"], reverse=True)[:LAST_N]
-    total = sum(float(row["vwap"]) * float(row["volume"]) for row in rows)
-    return symbol, description, total
+    res.raise_for_status()
+    rows = sorted(res.json(), key=lambda x: x["date"], reverse=True)[:LAST_N]
+    return symbol, description, sum(row["vwap"] * row["volume"] for row in rows)
 
 
 def load_top_company_names_us(

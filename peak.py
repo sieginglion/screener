@@ -12,13 +12,6 @@ from config import CANDIDATE_POOL_MULTIPLIER, MARKET, PEAK_CUTOFF_RATIO, RESULT_
 from run_u_analyze import cached, load_top_company_names
 
 
-def parse_score_response(body: str) -> tuple[float, float, float]:
-    first, second = json.loads(body)
-    if second is None:
-        raise ValueError("score service returned null second score")
-    return (first + second) / 2, first, second
-
-
 def cutoff_count(size: int) -> int:
     if size <= 0:
         return 0
@@ -27,32 +20,23 @@ def cutoff_count(size: int) -> int:
 
 @cached(43200)
 def fetch_growth(symbol: str) -> float:
-    response = httpx.get(
+    res = httpx.get(
         "http://localhost:8080/growth",
-        params={
-            "market": MARKET,
-            "symbol": symbol,
-        },
-        timeout=30.0,
+        params={"market": MARKET, "symbol": symbol},
     )
-    response.raise_for_status()
-    return float(response.text)
+    res.raise_for_status()
+    return float(res.text)
 
 
 @cached(43200)
-def fetch_score(symbol: str) -> tuple[float, float, float | None]:
+def fetch_score(symbol: str) -> tuple[float, float | None]:
     time.sleep(0.5)
-    response = httpx.get(
+    res = httpx.get(
         "http://localhost:8080/scores",
-        params={
-            "market": MARKET,
-            "symbol": symbol,
-            "q": Q,
-        },
-        timeout=30.0,
+        params={"market": MARKET, "symbol": symbol, "q": Q},
     )
-    response.raise_for_status()
-    return parse_score_response(response.text)
+    res.raise_for_status()
+    return res.json()
 
 
 def main() -> int:
@@ -91,7 +75,10 @@ def main() -> int:
     final_results: list[tuple[str, str, float, float, float, float | None]] = []
     for index, (symbol, description, growth) in enumerate(top_growth, start=1):
         try:
-            score, first, second = fetch_score(symbol)
+            first, second = fetch_score(symbol)
+            if second is None:
+                raise ValueError
+            score = (first + second) / 2
         except Exception as exc:
             sys.stderr.write(f"Skipping {symbol}: {exc}\n")
         else:
