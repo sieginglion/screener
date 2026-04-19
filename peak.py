@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-import json
 import math
 import os
 import sys
-import time
 
-import httpx
 from dotenv import load_dotenv
 
 from config import (
@@ -16,7 +13,7 @@ from config import (
     RESULT_LIMIT,
     Q,
 )
-from run_u_analyze import cached, load_top_company_names
+from run_u_analyze import cached_httpx_get, load_top_company_names
 
 
 def cutoff_count(size: int) -> int:
@@ -41,24 +38,34 @@ def growth_label() -> str:
     raise ValueError(f"Unsupported DIRECTION: {DIRECTION}")
 
 
-@cached(43200)
-def fetch_growth(symbol: str) -> float:
-    res = httpx.get(
-        "http://localhost:8080/growth",
-        params={"market": MARKET, "symbol": symbol},
+def combine_pair(first: float, second: float | None, missing_message: str) -> float:
+    if second is None:
+        if DIRECTION == "low_growth_high_valuation":
+            return first
+        raise ValueError(missing_message)
+    return (first + second) / 2
+
+
+def fetch_growth(symbol: str) -> tuple[float, float | None]:
+    res = cached_httpx_get(
+        "http://localhost:8080/growths",
+        params=[
+            ("market", MARKET),
+            ("symbol", symbol),
+        ],
     )
-    res.raise_for_status()
-    return float(res.text)
+    return res.json()
 
 
-@cached(43200)
 def fetch_score(symbol: str) -> tuple[float, float | None]:
-    time.sleep(0.5)
-    res = httpx.get(
+    res = cached_httpx_get(
         "http://localhost:8080/scores",
-        params={"market": MARKET, "symbol": symbol, "q": Q},
+        params=[
+            ("market", MARKET),
+            ("symbol", symbol),
+            ("q", Q),
+        ],
     )
-    res.raise_for_status()
     return res.json()
 
 
@@ -81,9 +88,14 @@ def main() -> int:
 
     sys.stderr.write(f"Fetching growth for {len(stocks)} stocks...\n")
     growth_results: list[tuple[str, str, float]] = []
-    for index, (symbol, description) in enumerate(stocks, start=1):
+    for symbol, description in stocks:
         try:
-            growth = fetch_growth(symbol)
+            revenue_per_share_growth, eps_growth = fetch_growth(symbol)
+            growth = combine_pair(
+                revenue_per_share_growth,
+                eps_growth,
+                "growth response missing eps growth",
+            )
         except Exception as exc:
             sys.stderr.write(
                 f"Skipping {symbol} during growth fetch: "
@@ -102,31 +114,24 @@ def main() -> int:
     sys.stderr.write(
         f"Scoring top {len(top_growth)} stocks by {growth_mode_label}...\n"
     )
-    final_results: list[tuple[str, str, float, float, float, float | None]] = []
-    for index, (symbol, description, growth) in enumerate(top_growth, start=1):
+    final_results: list[tuple[str, str, float]] = []
+    for symbol, description, _ in top_growth:
         try:
             first, second = fetch_score(symbol)
-            if second is None:
-                raise ValueError("score response missing second value")
-            score = (first + second) / 2
+            score = combine_pair(first, second, "score response missing second value")
         except Exception as exc:
             sys.stderr.write(
                 f"Skipping {symbol} during score fetch: "
                 f"{type(exc).__name__}: {exc}\n"
             )
         else:
-            final_results.append((symbol, description, growth, score, first, second))
+            final_results.append((symbol, description, score))
 
     score_cutoff = cutoff_count(len(top_growth))
-    final_results.sort(key=lambda item: item[3], reverse=score_desc)
+    final_results.sort(key=lambda item: item[2], reverse=score_desc)
 
-    for symbol, description, growth, score, first, second in final_results[
-        :score_cutoff
-    ]:
-        second_text = "" if second is None else f"{second:.6f}"
-        print(
-            f"{symbol} {description};{growth:.6f};{score:.6f};{first:.6f};{second_text}"
-        )
+    for symbol, description, _ in final_results[:score_cutoff]:
+        print(f"{symbol} {description}")
 
     return 0
 

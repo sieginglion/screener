@@ -3,6 +3,7 @@ import datetime as dt
 import os
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -31,6 +32,7 @@ TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-
 
 PYTHON_BIN = sys.executable
 cache = Cache(Path().resolve() / '.cache')
+finmind_api = None
 
 
 def cached(ttl):
@@ -60,6 +62,15 @@ def cached(ttl):
         return sync_wrapper
 
     return decorator
+
+
+@cached(43200)
+def cached_httpx_get(url: str, params: List[Tuple[str, str | int]]) -> httpx.Response:
+    if url == "http://localhost:8080/scores":
+        time.sleep(0.5)
+    res = httpx.get(url, params=dict(params))
+    res.raise_for_status()
+    return res
 
 
 def today_for_market() -> dt.date:
@@ -339,14 +350,17 @@ def fetch_symbols_from_tv(
         ]
 
 
-@cached(43200)
 def fetch_trading_dollar_us(
     symbol: str, description: str, from_date: str, api_key: str
 ) -> Tuple[str, str, float]:
-    res = httpx.get(
-        FMP_URL, params={"symbol": symbol, "from": from_date, "apikey": api_key}
+    res = cached_httpx_get(
+        FMP_URL,
+        params=[
+            ("apikey", api_key),
+            ("from", from_date),
+            ("symbol", symbol),
+        ],
     )
-    res.raise_for_status()
     rows = sorted(res.json(), key=lambda x: x["date"], reverse=True)[:LAST_N]
     return symbol, description, sum(row["vwap"] * row["volume"] for row in rows)
 
@@ -382,25 +396,33 @@ def load_top_company_names_us(
     ]
 
 
-def fetch_trading_dollar_tw(
-    api: Any, stock_id: str, description: str, start: str, end: str
-) -> Tuple[str, str, float]:
-    df = api.taiwan_stock_daily(
+@cached(43200)
+def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str):
+    df = finmind_api.taiwan_stock_daily(
         stock_id=stock_id,
         start_date=start,
         end_date=end,
     )
+    return df
+
+
+def fetch_trading_dollar_tw(
+    stock_id: str, description: str, start: str, end: str
+) -> Tuple[str, str, float]:
+    df = fetch_taiwan_stock_daily(stock_id, start, end)
     total = df.sort_values("date", ascending=False).head(LAST_N)["Trading_money"].sum()
     return stock_id, description, float(total)
 
 
 def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[str]:
+    global finmind_api
+
     finmind_key = os.environ.get("FINMIND_KEY")
 
     from FinMind.data import DataLoader
 
-    api = DataLoader()
-    api.login_by_token(finmind_key)
+    finmind_api = DataLoader()
+    finmind_api.login_by_token(finmind_key)
 
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
@@ -425,7 +447,7 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
     with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
         results = list(
             pool.map(
-                lambda s: fetch_trading_dollar_tw(api, s[0], s[1], start, end),
+                lambda s: fetch_trading_dollar_tw(s[0], s[1], start, end),
                 stocks,
             )
         )
