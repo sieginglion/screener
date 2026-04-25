@@ -11,7 +11,7 @@ LAST_N = 10
 
 Q = 8  # 4?
 PEAK_CUTOFF_RATIO = 1 / 3
-RESULT_LIMIT = 144
+RESULT_LIMIT = 288
 # Supported values:
 # - "high_growth_low_valuation"
 # - "low_growth_high_valuation"
