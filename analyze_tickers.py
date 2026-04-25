@@ -15,8 +15,8 @@ from xai_sdk.chat import system, user
 from xai_sdk.tools import web_search, x_search
 
 # --- Configuration ---
-MODEL_GPT = "gpt-5.4"
-MODEL_GROK = "grok-4-1-fast-non-reasoning"
+MODEL_GPT = "gpt-5.5"
+MODEL_GROK = "grok-4.20-0309-reasoning"
 BATCH_SIZE = 8
 CONCURRENCY = 8
 SYSTEM_INSTRUCTION = "You are an equity research analyst."
@@ -74,7 +74,7 @@ def batched(iterable, n):
 
 
 def invoke_grok(client: XAIClient, prompt: str) -> str:
-    """Invoke Grok with web search and x_search enabled."""
+    """Invoke Grok reasoning with web search and x_search enabled."""
     try:
         tools = [web_search(), x_search()]
 
@@ -84,7 +84,7 @@ def invoke_grok(client: XAIClient, prompt: str) -> str:
         chat.append(system(SYSTEM_INSTRUCTION))
         chat.append(user(prompt))
 
-        # Sync call (assuming sample() is the method and it blocks)
+        # Reasoning models reason automatically; do not pass reasoning_effort.
         response = chat.sample()
         return response.content
     except Exception as e:
@@ -136,7 +136,7 @@ def main():
 
     # Initialize Clients
     try:
-        grok_client = XAIClient(api_key=os.getenv("XAI_API_KEY"))
+        grok_client = XAIClient(api_key=os.getenv("XAI_API_KEY"), timeout=3600)
         gpt_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     except Exception as e:
         sys.stderr.write(f"Error initializing clients: {e}\n")
