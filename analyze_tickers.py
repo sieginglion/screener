@@ -1,3 +1,4 @@
+import csv
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -39,10 +40,26 @@ def read_input() -> List[str]:
     if len(sys.argv) != 1:
         sys.stderr.write("Usage: python analyze_tickers.py < stdin\n")
         sys.exit(1)
-    input_str = sys.stdin.read()
 
-    raw_tickers = input_str.strip().splitlines()
-    tickers = [t.split(";", 1)[0] for t in raw_tickers]
+    def die(message: str) -> None:
+        sys.stderr.write(f"Error: {message}\n")
+        sys.exit(1)
+
+    tickers = []
+    for line_number, row in enumerate(csv.reader(sys.stdin), start=1):
+        if len(row) != 2:
+            die(f"line {line_number} must be: symbol,description")
+
+        symbol = row[0].strip()
+        description = row[1].strip()
+
+        if symbol == "symbol" and description == "description":
+            die("input must be headerless CSV")
+
+        if not symbol or not description:
+            die(f"line {line_number} has an empty field")
+
+        tickers.append(f"{symbol} {description}")
 
     if not tickers:
         sys.exit(0)

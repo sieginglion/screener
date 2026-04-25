@@ -132,7 +132,6 @@ def main() -> int:
     final_results.sort(key=lambda item: item[2], reverse=score_desc)
 
     writer = csv.writer(sys.stdout)
-    writer.writerow(["symbol", "description"])
     for symbol, description, _ in final_results[:score_cutoff]:
         writer.writerow([symbol, description])
 

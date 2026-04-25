@@ -9,7 +9,7 @@ DIRECTION = "high_growth_low_valuation"
 
 LAST_N = 10
 
-Q = 8  # 4?
+Q = 4  # 4?
 PEAK_CUTOFF_RATIO = 1 / 3
 RESULT_LIMIT = 288
 # Supported values:
