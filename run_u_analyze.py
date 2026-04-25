@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import datetime as dt
+import math
 import os
 import subprocess
 import sys
@@ -33,6 +34,14 @@ TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-
 PYTHON_BIN = sys.executable
 cache = Cache(Path().resolve() / '.cache')
 finmind_api = None
+
+
+def candidate_pool_size(result_limit: int, multiplier: float) -> int:
+    if result_limit < 0:
+        raise ValueError("result_limit must be non-negative")
+    if multiplier < 0:
+        raise ValueError("multiplier must be non-negative")
+    return math.ceil(result_limit * multiplier)
 
 
 def cached(ttl):
@@ -102,7 +111,7 @@ TV_US_PAYLOAD = {
     # "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
     "ignore_unknown_fields": False,
     "options": {"lang": "en"},
-    "range": [0, RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER],
+    "range": [0, candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER)],
     "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["america"],
@@ -226,7 +235,7 @@ TV_TW_PAYLOAD = {
     "columns": ["ticker-view"],
     "ignore_unknown_fields": False,
     "options": {"lang": "zh_TW"},
-    "range": [0, RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER],
+    "range": [0, candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER)],
     "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
     "symbols": {},
     "markets": ["taiwan"],
@@ -493,9 +502,8 @@ def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
 def main() -> int:
     load_dotenv()
     api_key = os.environ.get("FMP_API_KEY")
-    ticker_company_pairs = load_top_company_names(
-        api_key, RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER, RESULT_LIMIT
-    )
+    top_n_symbols = candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER)
+    ticker_company_pairs = load_top_company_names(api_key, top_n_symbols, RESULT_LIMIT)
 
     parts = chunked(ticker_company_pairs, CHUNK_SIZE)
 
