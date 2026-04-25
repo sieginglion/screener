@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import csv
 import math
 import os
 import sys
@@ -13,7 +14,7 @@ from config import (
     RESULT_LIMIT,
     Q,
 )
-from run_u_analyze import cached_httpx_get, load_top_company_names
+from run_u_analyze import cached_httpx_get, candidate_pool_size, load_top_company_names
 
 
 def cutoff_count(size: int) -> int:
@@ -78,7 +79,7 @@ def main() -> int:
 
     rows = load_top_company_names(
         api_key=api_key,
-        top_n_symbols=RESULT_LIMIT * CANDIDATE_POOL_MULTIPLIER,
+        top_n_symbols=candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER),
         top_n_results=RESULT_LIMIT,
     )
     stocks = [tuple(row.split(" ", 1)) for row in rows]
@@ -130,8 +131,10 @@ def main() -> int:
     score_cutoff = cutoff_count(len(top_growth))
     final_results.sort(key=lambda item: item[2], reverse=score_desc)
 
+    writer = csv.writer(sys.stdout)
+    writer.writerow(["symbol", "description"])
     for symbol, description, _ in final_results[:score_cutoff]:
-        print(f"{symbol} {description}")
+        writer.writerow([symbol, description])
 
     return 0
 
