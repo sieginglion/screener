@@ -11,6 +11,7 @@ from config import (
     DIRECTION,
     MARKET,
     PEAK_CUTOFF_RATIO,
+    PEAK_PAIR_MODE,
     RESULT_LIMIT,
     Q,
 )
@@ -40,10 +41,10 @@ def growth_label() -> str:
 
 
 def combine_pair(first: float, second: float | None, missing_message: str) -> float:
-    if second is None:
-        if DIRECTION == "low_growth_high_valuation":
-            return first
-        raise ValueError(missing_message)
+    # if second is None:
+    #     raise ValueError(missing_message)
+    if PEAK_PAIR_MODE == "first":
+        return first
     return (first + second) / 2
 
 
