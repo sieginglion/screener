@@ -12,7 +12,7 @@ LAST_N = 10
 Q = 8  # 4?
 PEAK_CUTOFF_RATIO = 1 / 2
 PEAK_PAIR_MODE = "first"
-RESULT_LIMIT = 384
+RESULT_LIMIT = 256
 # Supported values:
 # - "high_growth_low_valuation"
 # - "low_growth_high_valuation"
