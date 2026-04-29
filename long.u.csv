@@ -1,128 +1,64 @@
-BSX,Boston Scientific Corporation
-SYK,Stryker Corporation
-CELH,"Celsius Holdings, Inc."
-EFX,"Equifax, Inc."
 ASTS,"AST SpaceMobile, Inc."
-MRSH,Marsh
-VEEV,Veeva Systems Inc.
+BSX,Boston Scientific Corporation
 TDG,Transdigm Group Inc.
-TMUS,"T-Mobile US, Inc."
-CTAS,Cintas Corporation
-NOW,"ServiceNow, Inc."
-PAYX,"Paychex, Inc."
-WDAY,"Workday, Inc."
-DXCM,"DexCom, Inc."
-SNOW,Snowflake Inc.
-FICO,Fair Isaac Corporation
-AXON,"Axon Enterprise, Inc."
+SYK,Stryker Corporation
 ISRG,"Intuitive Surgical, Inc."
-ADBE,Adobe Inc.
-PATH,"UiPath, Inc."
+NOW,"ServiceNow, Inc."
+SNOW,Snowflake Inc.
+MRSH,Marsh
 LLY,Eli Lilly and Company
-ZS,"Zscaler, Inc."
-PGR,Progressive Corporation (The)
-SE,Sea Limited
-RMD,ResMed Inc.
-HUBS,"HubSpot, Inc."
-ROP,"Roper Technologies, Inc."
+WDAY,"Workday, Inc."
+FICO,Fair Isaac Corporation
 CRM,"Salesforce, Inc."
+ADBE,Adobe Inc.
+PGR,Progressive Corporation (The)
+SPGI,S&P Global Inc.
 SMCI,"Super Micro Computer, Inc."
-TTD,"The Trade Desk, Inc."
-TEAM,Atlassian Corporation
-ADSK,"Autodesk, Inc."
 INTU,Intuit Inc.
-FLUT,Flutter Entertainment plc
-IQV,"IQVIA Holdings, Inc."
-EXE,Expand Energy Corporation
-BX,Blackstone Inc.
-DT,"Dynatrace, Inc."
-ARES,Ares Management Corporation
-A,"Agilent Technologies, Inc."
-MA,Mastercard Incorporated
-DKNG,DraftKings Inc.
-AIG,"American International Group, Inc. New"
-CRH,CRH PLC
-MELI,"MercadoLibre, Inc."
-V,Visa Inc.
-NCLH,Norwegian Cruise Line Holdings Ltd.
-AVAV,"AeroVironment, Inc."
-NU,Nu Holdings Ltd.
-FISV,"Fiserv, Inc."
-SOUN,"SoundHound AI, Inc."
-ALNY,"Alnylam Pharmaceuticals, Inc."
-AMP,"Ameriprise Financial, Inc."
 BKNG,Booking Holdings Inc. Common Stock
+MELI,"MercadoLibre, Inc."
+TEAM,Atlassian Corporation
+BX,Blackstone Inc.
+UBER,"Uber Technologies, Inc."
+TMUS,"T-Mobile US, Inc."
 MCO,Moody's Corporation
 PYPL,"PayPal Holdings, Inc."
-SPGI,S&P Global Inc.
-VRTX,Vertex Pharmaceuticals Incorporated
-OMC,Omnicom Group Inc.
-UBER,"Uber Technologies, Inc."
-PINS,"Pinterest, Inc."
-CPNG,"Coupang, Inc."
-HUM,Humana Inc.
-QCOM,QUALCOMM Incorporated
+RBLX,Roblox Corporation
 HIMS,"Hims & Hers Health, Inc."
-MSFT,Microsoft Corporation
+MA,Mastercard Incorporated
 PANW,"Palo Alto Networks, Inc."
+MSFT,Microsoft Corporation
+V,Visa Inc.
 EW,Edwards Lifesciences Corporation
 SNPS,"Synopsys, Inc."
-MEDP,"Medpace Holdings, Inc."
-MET,"MetLife, Inc."
-MSCI,MSCI Inc.
-MDLZ,"Mondelez International, Inc."
-FSLR,"First Solar, Inc."
-RBLX,Roblox Corporation
-NFLX,"Netflix, Inc."
-AWK,"American Water Works Company, Inc."
-LVS,Las Vegas Sands Corp.
-APO,"Apollo Global Management, Inc. (New)"
-JD,"JD.com, Inc."
-WM,"Waste Management, Inc."
-KDP,Keurig Dr Pepper Inc.
-TCEHY,Tencent Holding Ltd.
-CBRE,CBRE Group Inc
-CLSK,"CleanSpark, Inc."
-DDOG,"Datadog, Inc."
-BLK,"BlackRock, Inc."
-CI,The Cigna Group
-META,"Meta Platforms, Inc."
-DASH,"DoorDash, Inc."
-MOH,Molina Healthcare Inc
-CDNS,"Cadence Design Systems, Inc."
-MDB,"MongoDB, Inc."
+QCOM,QUALCOMM Incorporated
 POET,POET Technologies Inc.
-GD,General Dynamics Corporation
+BLK,"BlackRock, Inc."
+CDNS,"Cadence Design Systems, Inc."
+APO,"Apollo Global Management, Inc. (New)"
+DDOG,"Datadog, Inc."
+DASH,"DoorDash, Inc."
+NFLX,"Netflix, Inc."
+MDLZ,"Mondelez International, Inc."
+META,"Meta Platforms, Inc."
 EQT,EQT Corporation
+REGN,"Regeneron Pharmaceuticals, Inc."
 ORCL,Oracle Corporation
-ELV,"Elevance Health, Inc."
 NVDA,NVIDIA Corporation
-OKE,"ONEOK, Inc."
-RJF,"Raymond James Financial, Inc."
-FTNT,"Fortinet, Inc."
-RDDT,"Reddit, Inc."
-IONQ,"IonQ, Inc."
 AXP,American Express Company
-IDXX,"IDEXX Laboratories, Inc."
+RDDT,"Reddit, Inc."
+ELV,"Elevance Health, Inc."
+IONQ,"IonQ, Inc."
 ABNB,"Airbnb, Inc."
+SHOP,Shopify Inc.
 CRWD,"CrowdStrike Holdings, Inc."
 HCA,"HCA Healthcare, Inc."
-SHOP,Shopify Inc.
-UNH,UnitedHealth Group Incorporated
-TTWO,"Take-Two Interactive Software, Inc."
-KR,Kroger Company (The)
-AFRM,"Affirm Holdings, Inc."
-SCHW,Charles Schwab Corporation (The)
 APP,Applovin Corporation
-THC,Tenet Healthcare Corporation
-AKAM,"Akamai Technologies, Inc."
-CRDO,Credo Technology Group Holding Ltd
+UNH,UnitedHealth Group Incorporated
+SCHW,Charles Schwab Corporation (The)
 PLTR,Palantir Technologies Inc.
+CRDO,Credo Technology Group Holding Ltd
 GE,GE Aerospace
-CAVA,"CAVA Group, Inc."
-B,Barrick Mining Corporation
-LUV,Southwest Airlines Company
-WST,"West Pharmaceutical Services, Inc."
+GD,General Dynamics Corporation
+AMGN,Amgen Inc.
 HOOD,"Robinhood Markets, Inc."
-ALAB,"Astera Labs, Inc."
-WPM,Wheaton Precious Metals Corp
