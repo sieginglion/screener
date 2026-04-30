@@ -4,7 +4,6 @@ import math
 import os
 import subprocess
 import sys
-import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -75,8 +74,6 @@ def cached(ttl):
 
 @cached(43200)
 def cached_httpx_get(url: str, params: List[Tuple[str, str | int]]) -> httpx.Response:
-    if url == "http://localhost:8080/scores":
-        time.sleep(0.5)
     res = httpx.get(url, params=dict(params))
     res.raise_for_status()
     return res
