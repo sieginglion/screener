@@ -4,6 +4,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from config import MARKET
 from peak import fetch_growth, fetch_score
 
 TARGET_SCORE = 0.625
@@ -49,8 +50,9 @@ def main() -> int:
 
     for symbol, rest in stocks:
         try:
-            growth = first_number(fetch_growth(symbol), "growths")
-            score = first_number(fetch_score(symbol), "scores")
+            market = "c" if MARKET == "u" and symbol == "BTC" else MARKET
+            growth = first_number(fetch_growth(symbol, market), "growths")
+            score = first_number(fetch_score(symbol, market), "scores")
             value = growth * (TARGET_SCORE - score)
         except Exception as exc:
             sys.stderr.write(f"Skipping {symbol}: {type(exc).__name__}: {exc}\n")

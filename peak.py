@@ -48,22 +48,22 @@ def combine_pair(first: float, second: float | None, missing_message: str) -> fl
     return (first + second) / 2
 
 
-def fetch_growth(symbol: str) -> tuple[float, float | None]:
+def fetch_growth(symbol: str, market: str = MARKET) -> tuple[float, float | None]:
     res = cached_httpx_get(
         "http://localhost:8080/growths",
         params=[
-            ("market", MARKET),
+            ("market", market),
             ("symbol", symbol),
         ],
     )
     return res.json()
 
 
-def fetch_score(symbol: str) -> tuple[float, float | None]:
+def fetch_score(symbol: str, market: str = MARKET) -> tuple[float, float | None]:
     res = cached_httpx_get(
         "http://localhost:8080/scores",
         params=[
-            ("market", MARKET),
+            ("market", market),
             ("symbol", symbol),
             ("q", Q),
         ],
@@ -84,6 +84,8 @@ def main() -> int:
         top_n_results=RESULT_LIMIT,
     )
     stocks = [tuple(row.split(" ", 1)) for row in rows]
+    if MARKET == "u":
+        stocks.append(("BTC", "Bitcoin"))
 
     if not stocks:
         return 0
@@ -92,7 +94,8 @@ def main() -> int:
     growth_results: list[tuple[str, str, float]] = []
     for symbol, description in stocks:
         try:
-            revenue_per_share_growth, eps_growth = fetch_growth(symbol)
+            market = "c" if MARKET == "u" and symbol == "BTC" else MARKET
+            revenue_per_share_growth, eps_growth = fetch_growth(symbol, market)
             growth = combine_pair(
                 revenue_per_share_growth,
                 eps_growth,
@@ -119,7 +122,8 @@ def main() -> int:
     final_results: list[tuple[str, str, float]] = []
     for symbol, description, _ in top_growth:
         try:
-            first, second = fetch_score(symbol)
+            market = "c" if MARKET == "u" and symbol == "BTC" else MARKET
+            first, second = fetch_score(symbol, market)
             score = combine_pair(first, second, "score response missing second value")
         except Exception as exc:
             sys.stderr.write(

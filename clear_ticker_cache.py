@@ -21,18 +21,40 @@ def key_matches_ticker(key, ticker: str) -> bool:
     return any(("symbol", ticker) in params or ("stock_id", ticker) in params for params in param_sets)
 
 
+def key_matches_endpoint(key, endpoint: str) -> bool:
+    if not isinstance(key, tuple) or len(key) != 4:
+        return False
+
+    _, _, args, _ = key
+    return bool(args and isinstance(args[0], str) and args[0].endswith(endpoint))
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Clear cache entries for one ticker.")
-    parser.add_argument("ticker")
+    parser = argparse.ArgumentParser(description="Clear selected cache entries.")
+    parser.add_argument("ticker", nargs="?", help="Ticker or stock_id to clear.")
+    parser.add_argument(
+        "--scores",
+        action="store_true",
+        help="Clear every cached /scores response.",
+    )
     args = parser.parse_args()
 
-    ticker = args.ticker.upper()
-    keys = [key for key in cache.iterkeys() if key_matches_ticker(key, ticker)]
+    selected_modes = sum(bool(mode) for mode in (args.scores, args.ticker))
+    if selected_modes != 1:
+        parser.error("provide exactly one of: ticker or --scores")
+
+    if args.scores:
+        keys = [key for key in cache.iterkeys() if key_matches_endpoint(key, "/scores")]
+        label = "/scores cache entries"
+    elif args.ticker:
+        ticker = args.ticker.upper()
+        keys = [key for key in cache.iterkeys() if key_matches_ticker(key, ticker)]
+        label = f"cache entries for {ticker}"
 
     for key in keys:
         del cache[key]
 
-    print(f"removed {len(keys)} cache entries for {ticker}")
+    print(f"removed {len(keys)} {label}")
     return 0
 
 
