@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import csv
 import datetime as dt
+import io
 import math
 import os
 import subprocess
@@ -26,9 +28,11 @@ from config import (
     TV_SORT_WINDOW,
 )
 
-FMP_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
+TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
 
 PYTHON_BIN = sys.executable
 cache = Cache(Path().resolve() / '.cache')
@@ -36,10 +40,6 @@ finmind_api = None
 
 
 def candidate_pool_size(result_limit: int, multiplier: float) -> int:
-    if result_limit < 0:
-        raise ValueError("result_limit must be non-negative")
-    if multiplier < 0:
-        raise ValueError("multiplier must be non-negative")
     return math.ceil(result_limit * multiplier)
 
 
@@ -82,6 +82,8 @@ def cached_httpx_get(url: str, params: List[Tuple[str, str | int]]) -> httpx.Res
 def today_for_market() -> dt.date:
     if MARKET == "t":
         return dt.datetime.now(ZoneInfo("Asia/Taipei")).date()
+    if MARKET == "j":
+        return dt.datetime.now(ZoneInfo("Asia/Tokyo")).date()
     return dt.datetime.now(ZoneInfo("America/New_York")).date()
 
 
@@ -190,7 +192,7 @@ TV_US_PAYLOAD = {
                                         "expression": {
                                             "left": "typespecs",
                                             "operation": "has_none_of",
-                                            "right": ["etf"],
+                                            "right": ["etf", "mutual", "closedend"],
                                         }
                                     },
                                 ],
@@ -314,7 +316,131 @@ TV_TW_PAYLOAD = {
                                         "expression": {
                                             "left": "typespecs",
                                             "operation": "has_none_of",
-                                            "right": ["etf"],
+                                            "right": ["etf", "mutual", "closedend"],
+                                        }
+                                    },
+                                ],
+                            }
+                        },
+                    ],
+                }
+            },
+            {
+                "expression": {
+                    "left": "typespecs",
+                    "operation": "has_none_of",
+                    "right": ["pre-ipo"],
+                }
+            },
+        ],
+    },
+}
+
+TV_JP_HEADERS = {
+    "accept": "application/json",
+    "accept-language": "en-US,en;q=0.9",
+    "cache-control": "no-cache",
+    "content-type": "text/plain;charset=UTF-8",
+    "origin": "https://jp.tradingview.com",
+    "pragma": "no-cache",
+    "priority": "u=1, i",
+    "referer": "https://jp.tradingview.com/",
+    "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+}
+
+TV_JP_PAYLOAD = {
+    "columns": ["ticker-view"],
+    "ignore_unknown_fields": False,
+    "options": {"lang": "ja"},
+    "range": [0, candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER)],
+    "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
+    "symbols": {},
+    "markets": ["japan"],
+    "filter2": {
+        "operator": "and",
+        "operands": [
+            {
+                "operation": {
+                    "operator": "or",
+                    "operands": [
+                        {
+                            "operation": {
+                                "operator": "and",
+                                "operands": [
+                                    {
+                                        "expression": {
+                                            "left": "type",
+                                            "operation": "equal",
+                                            "right": "stock",
+                                        }
+                                    },
+                                    {
+                                        "expression": {
+                                            "left": "typespecs",
+                                            "operation": "has",
+                                            "right": ["common"],
+                                        }
+                                    },
+                                ],
+                            }
+                        },
+                        {
+                            "operation": {
+                                "operator": "and",
+                                "operands": [
+                                    {
+                                        "expression": {
+                                            "left": "type",
+                                            "operation": "equal",
+                                            "right": "stock",
+                                        }
+                                    },
+                                    {
+                                        "expression": {
+                                            "left": "typespecs",
+                                            "operation": "has",
+                                            "right": ["preferred"],
+                                        }
+                                    },
+                                ],
+                            }
+                        },
+                        {
+                            "operation": {
+                                "operator": "and",
+                                "operands": [
+                                    {
+                                        "expression": {
+                                            "left": "type",
+                                            "operation": "equal",
+                                            "right": "dr",
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                        {
+                            "operation": {
+                                "operator": "and",
+                                "operands": [
+                                    {
+                                        "expression": {
+                                            "left": "type",
+                                            "operation": "equal",
+                                            "right": "fund",
+                                        }
+                                    },
+                                    {
+                                        "expression": {
+                                            "left": "typespecs",
+                                            "operation": "has_none_of",
+                                            "right": ["etf", "mutual", "closedend"],
                                         }
                                     },
                                 ],
@@ -356,29 +482,44 @@ def fetch_symbols_from_tv(
         ]
 
 
-def fetch_trading_dollar_us(
+def fetch_trading_dollar_fmp(
     symbol: str, description: str, from_date: str, api_key: str
 ) -> Tuple[str, str, float]:
+    fmp_symbol = f"{symbol}.T" if MARKET == "j" else symbol
     res = cached_httpx_get(
-        FMP_URL,
+        f"{FMP_LEGACY_URL}/{fmp_symbol}" if MARKET == "j" else FMP_STABLE_URL,
         params=[
             ("apikey", api_key),
             ("from", from_date),
-            ("symbol", symbol),
+            *([] if MARKET == "j" else [("symbol", fmp_symbol)]),
         ],
     )
-    rows = sorted(res.json(), key=lambda x: x["date"], reverse=True)[:LAST_N]
+    data = res.json()
+    rows = data.get("historical", []) if MARKET == "j" else data
+
+    if len(rows) < LAST_N:
+        sys.stderr.write(
+            f"Skipping {symbol} trading dollar data: only {len(rows)} FMP rows, need {LAST_N}\n"
+        )
+        return symbol, description, 0
+
+    rows = sorted(rows, key=lambda x: x["date"], reverse=True)[:LAST_N]
     return symbol, description, sum(row["vwap"] * row["volume"] for row in rows)
 
 
-def load_top_company_names_us(
-    api_key: str | None, top_n_symbols: int, top_n_results: int
+def load_top_company_names_fmp(
+    api_key: str | None,
+    top_n_symbols: int,
+    top_n_results: int,
+    tv_url: str,
+    tv_headers: dict[str, str],
+    tv_payload: dict[str, Any],
 ) -> List[str]:
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
-        tv_url=TV_US_URL,
-        tv_headers=TV_US_HEADERS,
-        tv_payload=TV_US_PAYLOAD,
+        tv_url=tv_url,
+        tv_headers=tv_headers,
+        tv_payload=tv_payload,
         top_n_symbols=top_n_symbols,
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
@@ -392,7 +533,7 @@ def load_top_company_names_us(
     from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
     results = [
-        fetch_trading_dollar_us(symbol, description, from_date, api_key)
+        fetch_trading_dollar_fmp(symbol, description, from_date, api_key)
         for symbol, description in stocks
     ]
 
@@ -400,6 +541,19 @@ def load_top_company_names_us(
     return [
         f"{symbol} {description.replace(';', ',')}" for symbol, description, _ in top
     ]
+
+
+def load_top_company_names_us(
+    api_key: str | None, top_n_symbols: int, top_n_results: int
+) -> List[str]:
+    return load_top_company_names_fmp(
+        api_key,
+        top_n_symbols,
+        top_n_results,
+        TV_US_URL,
+        TV_US_HEADERS,
+        TV_US_PAYLOAD,
+    )
 
 
 @cached(43200)
@@ -464,11 +618,26 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
     ]
 
 
+def load_top_company_names_jp(
+    api_key: str | None, top_n_symbols: int, top_n_results: int
+) -> List[str]:
+    return load_top_company_names_fmp(
+        api_key,
+        top_n_symbols,
+        top_n_results,
+        TV_JP_URL,
+        TV_JP_HEADERS,
+        TV_JP_PAYLOAD,
+    )
+
+
 def load_top_company_names(
     api_key: str | None, top_n_symbols: int, top_n_results: int
 ) -> List[str]:
     if MARKET == "t":
         return load_top_company_names_tw(top_n_symbols, top_n_results)
+    if MARKET == "j":
+        return load_top_company_names_jp(api_key, top_n_symbols, top_n_results)
     return load_top_company_names_us(api_key, top_n_symbols, top_n_results)
 
 
@@ -478,10 +647,15 @@ def chunked(items: Sequence[str], size: int) -> List[List[str]]:
 
 def run_analyze_part(ticker_company_pairs: Sequence[str]) -> str:
     """Run analyze_tickers.py for one chunk via stdin and return stdout."""
+    stdin = io.StringIO()
+    writer = csv.writer(stdin, lineterminator="\n")
+    for pair in ticker_company_pairs:
+        writer.writerow(pair.split(maxsplit=1))
+
     try:
         proc = subprocess.run(
             [PYTHON_BIN, "analyze_tickers.py"],
-            input="\n".join(ticker_company_pairs),
+            input=stdin.getvalue(),
             capture_output=True,
             text=True,
             check=True,
