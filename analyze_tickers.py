@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import csv
 import os
 import sys
@@ -14,12 +15,18 @@ from xai_sdk import Client as XAIClient
 from xai_sdk.chat import system, user
 from xai_sdk.tools import web_search, x_search
 
+from config import MARKET
+
 # --- Configuration ---
 MODEL_GPT = "gpt-5.5"
-MODEL_GROK = "grok-4.20-0309-reasoning"
+MODEL_GROK = "grok-4.3"
 BATCH_SIZE = 8
 CONCURRENCY = 8
 SYSTEM_INSTRUCTION = "You are an equity research analyst."
+LANGUAGE_SUFFIX_BY_MARKET = {
+    "t": ". In Taiwanese Chinese",
+    "j": ". In Taiwanese Chinese",
+}
 
 
 def check_env():
@@ -47,14 +54,14 @@ def read_input() -> List[str]:
 
     tickers = []
     for line_number, row in enumerate(csv.reader(sys.stdin), start=1):
-        if len(row) != 2:
-            die(f"line {line_number} must be: symbol,description")
+        if len(row) < 2:
+            die(f"line {line_number} must include at least: symbol,description")
 
         symbol = row[0].strip()
         description = row[1].strip()
 
         if symbol == "symbol" and description == "description":
-            die("input must be headerless CSV")
+            continue
 
         if not symbol or not description:
             die(f"line {line_number} has an empty field")
@@ -143,9 +150,7 @@ def main():
         sys.exit(1)
 
     batches = list(batched(tickers, BATCH_SIZE))
-    language_suffix = ""
-    if tickers and tickers[0][:1].isdecimal():
-        language_suffix = ". In Taiwan Chinese"
+    language_suffix = LANGUAGE_SUFFIX_BY_MARKET.get(MARKET, "")
 
     # Process batches concurrently
     all_batch_results = []
@@ -171,7 +176,7 @@ def main():
         # --- Reduce / Merge Phase ---
         all_results_str = "\n\n".join(all_batch_results)
 
-        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nGroup them by what they do as finely as possible. One can be in multiple groups. Ensure no one is overlooked. Include ticker symbol and company name{language_suffix}"
+        reduce_prompt = f"<text>\n{all_results_str}\n</text>\nGroup them by what they do. One can be in multiple groups. Ensure no one is overlooked. Include ticker symbol and company name{language_suffix}"
 
         try:
             # Step C: GPT, High Reasoning
