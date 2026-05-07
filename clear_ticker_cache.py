@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Clear selected entries from the shared screener HTTP cache."""
 import argparse
 
 from run_u_analyze import cache
@@ -30,22 +31,34 @@ def key_matches_endpoint(key, endpoint: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Clear selected cache entries.")
+    parser = argparse.ArgumentParser(
+        description="Clear either a ticker-specific cache or the Portman scoring cache.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("ticker", nargs="?", help="Ticker or stock_id to clear.")
     parser.add_argument(
-        "--scores",
+        "--portman",
         action="store_true",
-        help="Clear every cached /scores response.",
+        dest="clear_scoring_caches",
+        help="Clear every cached response for Portman /growths and /scores.",
     )
+    parser.epilog = """Examples:
+  clear_ticker_cache.py AAPL
+  clear_ticker_cache.py --portman"""
     args = parser.parse_args()
 
-    selected_modes = sum(bool(mode) for mode in (args.scores, args.ticker))
+    selected_modes = sum(bool(mode) for mode in (args.clear_scoring_caches, args.ticker))
     if selected_modes != 1:
-        parser.error("provide exactly one of: ticker or --scores")
+        parser.error("provide exactly one of: ticker or --portman")
 
-    if args.scores:
-        keys = [key for key in cache.iterkeys() if key_matches_endpoint(key, "/scores")]
-        label = "/scores cache entries"
+    if args.clear_scoring_caches:
+        endpoints = ("/growths", "/scores")
+        keys = [
+            key
+            for key in cache.iterkeys()
+            if any(key_matches_endpoint(key, endpoint) for endpoint in endpoints)
+        ]
+        label = "/growths and /scores cache entries"
     elif args.ticker:
         ticker = args.ticker.upper()
         keys = [key for key in cache.iterkeys() if key_matches_ticker(key, ticker)]

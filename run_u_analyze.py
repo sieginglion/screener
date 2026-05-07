@@ -74,7 +74,7 @@ def cached(ttl):
 
 @cached(43200)
 def cached_httpx_get(url: str, params: List[Tuple[str, str | int]]) -> httpx.Response:
-    res = httpx.get(url, params=dict(params))
+    res = httpx.get(url, params=dict(params), timeout=None)
     res.raise_for_status()
     return res
 
