@@ -20,6 +20,10 @@ from run_u_analyze import cached_httpx_get, load_top_company_names
 SCORING_BASE_URL = "http://localhost:8080"
 
 
+def first(values):
+    return values[0]
+
+
 @dataclass(frozen=True)
 class Candidate:
     symbol: str
@@ -54,23 +58,24 @@ def candidate_market(symbol: str) -> str:
     return MARKET
 
 
-def fetch_first_score(path: str, params: dict[str, str | int]) -> float:
+def fetch_score(path: str, params: dict[str, str | int], selector) -> float:
     response = cached_httpx_get(
         f"{SCORING_BASE_URL}/{path}",
         params=list(params.items()),
     )
     values = response.json()
-    return float(values[0])
+    return selector([v for v in values if v])
 
 
 def score_growth(candidate: Candidate) -> GrowthCandidate | None:
     try:
-        score = fetch_first_score(
+        score = fetch_score(
             "growths",
             {
                 "market": candidate_market(candidate.symbol),
                 "symbol": candidate.symbol,
             },
+            first,
         )
     except Exception as exc:
         sys.stderr.write(f"Skipping {candidate.symbol} growth score: {exc}\n")
@@ -81,13 +86,14 @@ def score_growth(candidate: Candidate) -> GrowthCandidate | None:
 
 def score_valuation(candidate: GrowthCandidate) -> ValuationCandidate | None:
     try:
-        score = fetch_first_score(
+        score = fetch_score(
             "scores",
             {
                 "market": candidate_market(candidate.candidate.symbol),
                 "symbol": candidate.candidate.symbol,
                 "q": Q,
             },
+            min,
         )
     except Exception as exc:
         sys.stderr.write(
@@ -117,7 +123,7 @@ def keep_top_growth(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
     return scored[: keep_count(len(attempted))]
 
 
-def keep_lowest_valuation(
+def score_all_valuations(
     candidates: Iterable[GrowthCandidate],
 ) -> list[ValuationCandidate]:
     attempted = list(candidates)
@@ -127,7 +133,7 @@ def keep_lowest_valuation(
         if (scored_candidate := score_valuation(candidate)) is not None
     ]
     scored.sort(key=lambda candidate: candidate.valuation_score)
-    return scored[: keep_count(len(attempted))]
+    return scored
 
 
 def load_candidates() -> list[Candidate]:
@@ -164,7 +170,7 @@ def main() -> int:
     load_dotenv()
 
     growth_survivors = keep_top_growth(load_candidates())
-    final_survivors = keep_lowest_valuation(growth_survivors)
+    final_survivors = score_all_valuations(growth_survivors)
     final_survivors.sort(key=lambda candidate: candidate.power, reverse=True)
 
     write_results(final_survivors)
