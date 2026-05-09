@@ -44,7 +44,7 @@ class ValuationCandidate:
 
     @property
     def power(self) -> float:
-        return self.growth_score * (0.625 - self.valuation_score)
+        return self.growth_score * (0.5 - self.valuation_score)
 
 
 def parse_candidate(row: str) -> Candidate:
@@ -64,7 +64,7 @@ def fetch_score(path: str, params: dict[str, str | int], selector) -> float:
         params=list(params.items()),
     )
     values = response.json()
-    return selector([v for v in values if v])
+    return selector([v for v in values if v is not None])
 
 
 def score_growth(candidate: Candidate) -> GrowthCandidate | None:

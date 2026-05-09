@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Clear selected entries from the shared screener HTTP cache."""
+
 import argparse
 
 from run_u_analyze import cache
@@ -19,7 +20,10 @@ def key_matches_ticker(key, ticker: str) -> bool:
         if name == "params":
             param_sets.append(value)
 
-    return any(("symbol", ticker) in params or ("stock_id", ticker) in params for params in param_sets)
+    return any(
+        ("symbol", ticker) in params or ("stock_id", ticker) in params
+        for params in param_sets
+    )
 
 
 def key_matches_endpoint(key, endpoint: str) -> bool:
@@ -47,7 +51,9 @@ def main() -> int:
   clear_ticker_cache.py --portman"""
     args = parser.parse_args()
 
-    selected_modes = sum(bool(mode) for mode in (args.clear_scoring_caches, args.ticker))
+    selected_modes = sum(
+        bool(mode) for mode in (args.clear_scoring_caches, args.ticker)
+    )
     if selected_modes != 1:
         parser.error("provide exactly one of: ticker or --portman")
 
