@@ -1,89 +1,80 @@
-symbol,description,power
-COHR,Coherent Corp.,150.044
 CYTK,"Cytokinetics, Incorporated",0.644408
-ALNY,"Alnylam Pharmaceuticals, Inc.",0.362279
-    PLTR,Palantir Technologies Inc.,0.299449
-RDDT,"Reddit, Inc.",0.229941
-    LLY,Eli Lilly and Company,0.223518
-    EQT,EQT Corporation,0.223288
-    NU,Nu Holdings Ltd.,0.201306
-    MELI,"MercadoLibre, Inc.",0.185305
-ARES,Ares Management Corporation,0.167858
-APP,Applovin Corporation,0.143826
-    NVDA,NVIDIA Corporation,0.137087
-    BX,Blackstone Inc.,0.135363
-META,"Meta Platforms, Inc.",0.133076
-SNOW,Snowflake Inc.,0.12525
-    BTC,Bitcoin,0.121324
-    AXON,"Axon Enterprise, Inc.",0.115967
-    ISRG,"Intuitive Surgical, Inc.",0.109993
-SHOP,Shopify Inc.,0.105592
-OWL,Blue Owl Capital Inc.,0.102199
-    NOW,"ServiceNow, Inc.",0.102045
-CF,"CF Industries Holdings, Inc.",0.0995414
-    BKNG,Booking Holdings Inc. Common Stock,0.0971063
-TEAM,Atlassian Corporation,0.0938139
-OMC,Omnicom Group Inc.,0.0937116
-    HOOD,"Robinhood Markets, Inc.",0.0917307
-LNG,"Cheniere Energy, Inc.",0.0913202
-NFLX,"Netflix, Inc.",0.0910488
-TTD,"The Trade Desk, Inc.",0.0903047
-OKE,"ONEOK, Inc.",0.0896603
-KKR,KKR & Co. Inc.,0.0876397
+        PLTR,Palantir Technologies Inc.,0.299449
+    RDDT,"Reddit, Inc.",0.229941
+        LLY,Eli Lilly and Company,0.223518
+        EQT,EQT Corporation,0.223288
+        NU,Nu Holdings Ltd.,0.201306
+        MELI,"MercadoLibre, Inc.",0.185305
+    ARES,Ares Management Corporation,0.167858
+    APP,Applovin Corporation,0.143826
+        NVDA,NVIDIA Corporation,0.137087
+        BX,Blackstone Inc.,0.135363
+    META,"Meta Platforms, Inc.",0.133076
+    SNOW,Snowflake Inc.,0.12525
+        BTC,Bitcoin,0.121324
+        AXON,"Axon Enterprise, Inc.",0.115967
+        ISRG,"Intuitive Surgical, Inc.",0.109993
+    SHOP,Shopify Inc.,0.105592
+    OWL,Blue Owl Capital Inc.,0.102199
+        NOW,"ServiceNow, Inc.",0.102045
+    CF,"CF Industries Holdings, Inc.",0.0995414
+        BKNG,Booking Holdings Inc. Common Stock,0.0971063
+    TEAM,Atlassian Corporation,0.0938139
+        HOOD,"Robinhood Markets, Inc.",0.0917307
+    NFLX,"Netflix, Inc.",0.0910488
+    TTD,"The Trade Desk, Inc.",0.0903047
+    KKR,KKR & Co. Inc.,0.0876397
 BSX,Boston Scientific Corporation,0.0848542
-    MSFT,Microsoft Corporation,0.079748
-MCK,McKesson Corporation,0.0796194
-ADSK,"Autodesk, Inc.",0.0786491
-    V,Visa Inc.,0.0781038
-ADBE,Adobe Inc.,0.0726048
-    VEEV,Veeva Systems Inc.,0.0698783
+        MSFT,Microsoft Corporation,0.079748
+    MCK,McKesson Corporation,0.0796194
+    ADSK,"Autodesk, Inc.",0.0786491
+        V,Visa Inc.,0.0781038
+    ADBE,Adobe Inc.,0.0726048
+        VEEV,Veeva Systems Inc.,0.0698783
 EW,Edwards Lifesciences Corporation,0.069766
 PGR,Progressive Corporation (The),0.0691558
-TMUS,"T-Mobile US, Inc.",0.0648127
-ROP,"Roper Technologies, Inc.",0.0642887
+        ROP,"Roper Technologies, Inc.",0.0642887
 AJG,Arthur J. Gallagher & Co.,0.0627274
-WDAY,"Workday, Inc.",0.0618831
-TDG,Transdigm Group Inc.,0.058877
-SPGI,S&P Global Inc.,0.0576136
-CPNG,"Coupang, Inc.",0.0575967
-B,Barrick Mining Corporation,0.057219
-CRM,"Salesforce, Inc.",0.054948
-VRTX,Vertex Pharmaceuticals Incorporated,0.0547712
+    WDAY,"Workday, Inc.",0.0618831
+    TDG,Transdigm Group Inc.,0.058877
+    SPGI,S&P Global Inc.,0.0576136
+    CPNG,"Coupang, Inc.",0.0575967
+    CRM,"Salesforce, Inc.",0.054948
 MRSH,Marsh,0.0545407
-GEV,GE Vernova Inc.,0.0530934
-SCHW,Charles Schwab Corporation (The),0.0526807
-FSLR,"First Solar, Inc.",0.0523935
-IDXX,"IDEXX Laboratories, Inc.",0.0496031
-WM,"Waste Management, Inc.",0.0493252
-NTRA,"Natera, Inc.",0.0478371
-CI,The Cigna Group,0.0478222
-MCO,Moody's Corporation,0.0470681
-SOFI,"SoFi Technologies, Inc.",0.046371
-TWLO,Twilio Inc.,0.044824
-HCA,"HCA Healthcare, Inc.",0.0414933
-EXPE,"Expedia Group, Inc.",0.0400879
-WAT,Waters Corporation,0.0326375
-TEL,TE Connectivity plc,0.0318338
-HUM,Humana Inc.,0.030014
-AMZN,"Amazon.com, Inc.",0.0297685
-ORCL,Oracle Corporation,0.0282245
-ROKU,"Roku, Inc.",0.0264024
-MDLZ,"Mondelez International, Inc.",0.0260162
-JCI,Johnson Controls International plc,0.0257944
-KMI,"Kinder Morgan, Inc.",0.0243194
-ABNB,"Airbnb, Inc.",0.0240575
-REGN,"Regeneron Pharmaceuticals, Inc.",0.0211482
-APO,"Apollo Global Management, Inc. (New)",0.019644
-GE,GE Aerospace,0.0188941
-AXP,American Express Company,0.0171664
-CNC,Centene Corporation,0.0161238
-FE,FirstEnergy Corp.,0.0148168
-NEE,"NextEra Energy, Inc.",0.0145137
-BLD,TopBuild Corp.,0.0128514
-HSY,The Hershey Company,0.0123967
-AVGO,Broadcom Inc.,0.0104444
-ELV,"Elevance Health, Inc.",0.0101432
-ANET,"Arista Networks, Inc.",0.00987301
-MDB,"MongoDB, Inc.",0.00424104
-PANW,"Palo Alto Networks, Inc.",0.00419776
-UNH,UnitedHealth Group Incorporated,0.000630951
+    GEV,GE Vernova Inc.,0.0530934
+    SCHW,Charles Schwab Corporation (The),0.0526807
+    FSLR,"First Solar, Inc.",0.0523935
+    IDXX,"IDEXX Laboratories, Inc.",0.0496031
+    WM,"Waste Management, Inc.",0.0493252
+    NTRA,"Natera, Inc.",0.0478371
+    CI,The Cigna Group,0.0478222
+    MCO,Moody's Corporation,0.0470681
+    SOFI,"SoFi Technologies, Inc.",0.046371
+    TWLO,Twilio Inc.,0.044824
+    HCA,"HCA Healthcare, Inc.",0.0414933
+    EXPE,"Expedia Group, Inc.",0.0400879
+    WAT,Waters Corporation,0.0326375
+    TEL,TE Connectivity plc,0.0318338
+    HUM,Humana Inc.,0.030014
+    AMZN,"Amazon.com, Inc.",0.0297685
+    ORCL,Oracle Corporation,0.0282245
+    ROKU,"Roku, Inc.",0.0264024
+    MDLZ,"Mondelez International, Inc.",0.0260162
+    JCI,Johnson Controls International plc,0.0257944
+    KMI,"Kinder Morgan, Inc.",0.0243194
+    ABNB,"Airbnb, Inc.",0.0240575
+    REGN,"Regeneron Pharmaceuticals, Inc.",0.0211482
+    APO,"Apollo Global Management, Inc. (New)",0.019644
+    GE,GE Aerospace,0.0188941
+    AXP,American Express Company,0.0171664
+    CNC,Centene Corporation,0.0161238
+    FE,FirstEnergy Corp.,0.0148168
+    NEE,"NextEra Energy, Inc.",0.0145137
+    BLD,TopBuild Corp.,0.0128514
+    HSY,The Hershey Company,0.0123967
+    AVGO,Broadcom Inc.,0.0104444
+    ELV,"Elevance Health, Inc.",0.0101432
+    ANET,"Arista Networks, Inc.",0.00987301
+    MDB,"MongoDB, Inc.",0.00424104
+    PANW,"Palo Alto Networks, Inc.",0.00419776
+    UNH,UnitedHealth Group Incorporated,0.000630951
