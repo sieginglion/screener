@@ -1,0 +1,211 @@
+CYTK,"Cytokinetics, Incorporated",1.46347
+    SIMO,Silicon Motion Technology Corporation,1.31681
+CRBG,Corebridge Financial Inc.,1.00382
+EXE,Expand Energy Corporation,0.727075
+ALNY,"Alnylam Pharmaceuticals, Inc.",0.451853
+ARGX,argenx SE,0.434386
+        PLTR,Palantir Technologies Inc.,0.382294
+    SOUN,"SoundHound AI, Inc.",0.352793
+    RDDT,"Reddit, Inc.",0.300597
+EQT,EQT Corporation,0.27911
+        LLY,Eli Lilly and Company,0.274589
+        MELI,"MercadoLibre, Inc.",0.262611
+        NU,Nu Holdings Ltd.,0.255744
+PODD,Insulet Corporation,0.237303
+ARES,Ares Management Corporation,0.215669
+    DUOL,"Duolingo, Inc.",0.196322
+        NVDA,NVIDIA Corporation,0.193589
+    LPLA,LPL Financial Holdings Inc.,0.186477
+    APP,Applovin Corporation,0.183583
+BX,Blackstone Inc.,0.17681
+    SHOP,Shopify Inc.,0.175986
+    META,"Meta Platforms, Inc.",0.169021
+        BTC,Bitcoin,0.161045
+    SNOW,Snowflake Inc.,0.159512
+        AXON,"Axon Enterprise, Inc.",0.152443
+OWL,Blue Owl Capital Inc.,0.141068
+        SE,Sea Limited,0.139832
+KKR,KKR & Co. Inc.,0.138063
+        ISRG,"Intuitive Surgical, Inc.",0.13719
+        HOOD,"Robinhood Markets, Inc.",0.134833
+    TOST,"Toast, Inc.",0.132935
+        NOW,"ServiceNow, Inc.",0.132127
+    TEAM,Atlassian Corporation,0.129616
+        BKNG,Booking Holdings Inc. Common Stock,0.12145
+    TTD,"The Trade Desk, Inc.",0.119694
+    LNG,"Cheniere Energy, Inc.",0.118549
+    ZS,"Zscaler, Inc.",0.114323
+DXCM,"DexCom, Inc.",0.113095
+        NFLX,"Netflix, Inc.",0.11281
+        ADSK,"Autodesk, Inc.",0.111833
+        MSFT,Microsoft Corporation,0.106
+    BSX,Boston Scientific Corporation,0.105135
+    ADBE,Adobe Inc.,0.102064
+MCK,McKesson Corporation,0.0993055
+    PATH,"UiPath, Inc.",0.0975093
+    OKE,"ONEOK, Inc.",0.0960321
+        V,Visa Inc.,0.0950303
+EW,Edwards Lifesciences Corporation,0.0912663
+    PAYX,"Paychex, Inc.",0.0904629
+        VEEV,Veeva Systems Inc.,0.0888996
+    DTE,DTE Energy Company,0.0884466
+IDXX,"IDEXX Laboratories, Inc.",0.0881107
+    BROS,Dutch Bros Inc.,0.0832035
+PGR,Progressive Corporation (The),0.0830631
+    WDAY,"Workday, Inc.",0.0830049
+    TMUS,"T-Mobile US, Inc.",0.0825931
+    DKNG,DraftKings Inc.,0.082168
+    FSLR,"First Solar, Inc.",0.0819585
+        ROP,"Roper Technologies, Inc.",0.0810287
+AJG,Arthur J. Gallagher & Co.,0.0784524
+        TDG,Transdigm Group Inc.,0.0767185
+    TWLO,Twilio Inc.,0.0751582
+    MSCI,MSCI Inc.,0.0737465
+    TFC,Truist Financial Corporation,0.0734657
+        CRM,"Salesforce, Inc.",0.0726732
+    HCA,"HCA Healthcare, Inc.",0.0724993
+    EXPE,"Expedia Group, Inc.",0.0722439
+    CPNG,"Coupang, Inc.",0.0719959
+    EFX,"Equifax, Inc.",0.0711828
+    SPGI,S&P Global Inc.,0.0710195
+    ABNB,"Airbnb, Inc.",0.0678379
+    MRSH,Marsh,0.0675765
+    RMD,ResMed Inc.,0.0662113
+    GEV,GE Vernova Inc.,0.0659289
+    SCHW,Charles Schwab Corporation (The),0.0652655
+    CDW,CDW Corporation,0.0643389
+    IQV,"IQVIA Holdings, Inc.",0.062103
+    SOFI,"SoFi Technologies, Inc.",0.061871
+    WM,"Waste Management, Inc.",0.0611457
+    MCO,Moody's Corporation,0.0599859
+    CI,The Cigna Group,0.059316
+    VRTX,Vertex Pharmaceuticals Incorporated,0.0580655
+    YUM,"Yum! Brands, Inc.",0.0552912
+    AMZN,"Amazon.com, Inc.",0.0531839
+    WAT,Waters Corporation,0.0530609
+    BLK,"BlackRock, Inc.",0.052843
+    LITE,Lumentum Holdings Inc.,0.0526336
+    ORCL,Oracle Corporation,0.0514471
+    TEL,TE Connectivity plc,0.0504865
+    GE,GE Aerospace,0.0491246
+    CF,"CF Industries Holdings, Inc.",0.0479101
+    AVGO,Broadcom Inc.,0.0474744
+    ANET,"Arista Networks, Inc.",0.0472187
+    APO,"Apollo Global Management, Inc. (New)",0.0470422
+    CB,Chubb Limited,0.0463842
+    ROKU,"Roku, Inc.",0.0436295
+    NET,"Cloudflare, Inc.",0.0422336
+    CNC,Centene Corporation,0.0421011
+    JD,"JD.com, Inc.",0.0406309
+    HL,Hecla Mining Company,0.0389479
+    MDLZ,"Mondelez International, Inc.",0.0388748
+    JCI,Johnson Controls International plc,0.0373787
+    REGN,"Regeneron Pharmaceuticals, Inc.",0.0355289
+    AXP,American Express Company,0.0351581
+    BLD,TopBuild Corp.,0.0325687
+    NTRA,"Natera, Inc.",0.0274415
+    ELV,"Elevance Health, Inc.",0.0255391
+    KR,Kroger Company (The),0.024909
+    FE,FirstEnergy Corp.,0.0246946
+    SYF,Synchrony Financial,0.0238907
+    CRH,CRH PLC,0.0232926
+    NEE,"NextEra Energy, Inc.",0.0217705
+    NRG,"NRG Energy, Inc.",0.0202986
+    HUM,Humana Inc.,0.0200743
+    FAST,Fastenal Company,0.0185016
+    ULTA,"Ulta Beauty, Inc.",0.0174309
+    TTWO,"Take-Two Interactive Software, Inc.",0.0165519
+    UNH,UnitedHealth Group Incorporated,0.0143541
+    TPR,"Tapestry, Inc.",0.0139666
+    CLSK,"CleanSpark, Inc.",0.0132773
+    MDB,"MongoDB, Inc.",0.0130919
+    KMI,"Kinder Morgan, Inc.",0.0129585
+    THC,Tenet Healthcare Corporation,0.00866972
+    HSY,The Hershey Company,0.00790289
+    GD,General Dynamics Corporation,0.00777215
+    CAH,"Cardinal Health, Inc.",0.00614025
+    CDNS,"Cadence Design Systems, Inc.",0.00599434
+    WELL,Welltower Inc.,0.00361101
+    AEIS,"Advanced Energy Industries, Inc.",0.00227575
+    WST,"West Pharmaceutical Services, Inc.",0.00205285
+    BA,Boeing Company (The),0.00174192
+    PANW,"Palo Alto Networks, Inc.",-0.00272855
+    FTAI,FTAI Aviation Ltd.,-0.00528777
+    FTNT,"Fortinet, Inc.",-0.0054797
+    AAPL,Apple Inc.,-0.00729799
+    MP,MP Materials Corp.,-0.00769447
+    MKSI,MKS Inc.,-0.00972101
+    HLT,Hilton Worldwide Holdings Inc.,-0.0114374
+    MTZ,"MasTec, Inc.",-0.0182566
+    NUE,Nucor Corporation,-0.0202901
+    ETN,"Eaton Corporation, PLC",-0.0218344
+    GM,General Motors Company,-0.0244126
+    MS,Morgan Stanley,-0.0258572
+    ROK,"Rockwell Automation, Inc.",-0.0278408
+    FSLY,"Fastly, Inc.",-0.0280564
+    LYV,"Live Nation Entertainment, Inc.",-0.0284096
+    FLNC,"Fluence Energy, Inc.",-0.0286136
+    AME,"AMETEK, Inc.",-0.0290222
+    NI,NiSource Inc,-0.0292072
+    ARM,Arm Holdings plc,-0.0293366
+    WMB,"Williams Companies, Inc. (The)",-0.0312154
+    NEM,Newmont Corporation,-0.0335663
+    ASML,ASML Holding N.V. - New York Registry Shares,-0.0372773
+    IBKR,"Interactive Brokers Group, Inc.",-0.0383313
+    FTI,TechnipFMC plc,-0.0383447
+    AKAM,"Akamai Technologies, Inc.",-0.0384412
+    GLW,Corning Incorporated,-0.0391836
+    CBOE,"Cboe Global Markets, Inc.",-0.0402364
+    MNST,Monster Beverage Corporation,-0.042148
+    AAOI,"Applied Optoelectronics, Inc.",-0.0424174
+    LSCC,Lattice Semiconductor Corporation,-0.0425345
+    AMKR,"Amkor Technology, Inc.",-0.0447381
+    WCC,"WESCO International, Inc.",-0.0465889
+    HWM,Howmet Aerospace Inc.,-0.048395
+    CRWD,"CrowdStrike Holdings, Inc.",-0.0492106
+    GOOG,Alphabet Inc.,-0.0492847
+    TTMI,"TTM Technologies, Inc.",-0.0497431
+    WWD,"Woodward, Inc.",-0.050349
+    INOD,Innodata Inc.,-0.0503579
+    GOOGL,Alphabet Inc.,-0.0508577
+    KEYS,Keysight Technologies Inc.,-0.0516762
+    FLEX,Flex Ltd.,-0.0517665
+    HPE,Hewlett Packard Enterprise Company,-0.0521584
+    KLAC,KLA Corporation,-0.0545656
+    AMD,"Advanced Micro Devices, Inc.",-0.0548283
+    TXN,Texas Instruments Incorporated,-0.0578561
+    CAT,"Caterpillar, Inc.",-0.0580898
+    RIOT,"Riot Platforms, Inc.",-0.0600477
+    WULF,TeraWulf Inc.,-0.0669141
+    RMBS,"Rambus, Inc.",-0.0674263
+    TER,"Teradyne, Inc.",-0.0700136
+    EBAY,eBay Inc.,-0.0705904
+    PL,Planet Labs PBC,-0.0719693
+    IREN,IREN Limited,-0.0722409
+    CLS,"Celestica, Inc.",-0.0722981
+    PWR,"Quanta Services, Inc.",-0.0728865
+    APLD,Applied Digital Corporation,-0.0757477
+    CIFR,Cipher Digital Inc.,-0.0797143
+    DDOG,"Datadog, Inc.",-0.0798118
+    VRT,"Vertiv Holdings, LLC",-0.0809911
+    DELL,Dell Technologies Inc.,-0.0816556
+    EME,"EMCOR Group, Inc.",-0.082033
+    MPWR,"Monolithic Power Systems, Inc.",-0.085782
+    STX,Seagate Technology Holdings PLC,-0.0880115
+    MTSI,"MACOM Technology Solutions Holdings, Inc.",-0.0899432
+    JBL,Jabil Inc.,-0.096276
+    VIAV,Viavi Solutions Inc.,-0.0973749
+    TSM,Taiwan Semiconductor Manufacturing Company Ltd.,-0.0991091
+    CIEN,Ciena Corporation,-0.0999725
+    ADI,"Analog Devices, Inc.",-0.100149
+    FN,Fabrinet,-0.1005
+    LRCX,Lam Research Corporation,-0.109388
+    RKLB,Rocket Lab Corporation,-0.114962
+    MRVL,"Marvell Technology, Inc.",-0.118706
+    MXL,"MaxLinear, Inc",-0.133582
+    STRL,"Sterling Infrastructure, Inc.",-0.138239
+    MU,"Micron Technology, Inc.",-0.141447
+    FIX,"Comfort Systems USA, Inc.",-0.149182
+    NVT,nVent Electric plc,-0.162138
+    BE,Bloom Energy Corporation,-0.169284
+    SITM,SiTime Corporation,-0.181175
