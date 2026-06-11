@@ -18,10 +18,8 @@ from dotenv import load_dotenv
 from run_u_analyze import cached_httpx_get, load_top_company_names
 
 SCORING_BASE_URL = "http://localhost:8080"
-ENABLE_BTC = False
 BTC_GROWTH_MULTIPLIER = 0.75
 GROWTH_CONCURRENCY = 2
-VALUATION_CONCURRENCY = 1
 
 
 def scalar_score(value):
@@ -83,10 +81,6 @@ def fetch_score(path: str, params: dict[str, str | int], selector) -> float:
 
 
 def score_growth(candidate: Candidate) -> GrowthCandidate | None:
-    if candidate.symbol == "BTC" and not ENABLE_BTC:
-        sys.stderr.write(f"Skipping {candidate.symbol}: disabled symbol\n")
-        return None
-
     try:
         score = fetch_score(
             "growths",
@@ -149,13 +143,11 @@ def keep_top_growth(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
 def score_all_valuations(
     candidates: Iterable[GrowthCandidate],
 ) -> list[ValuationCandidate]:
-    attempted = list(candidates)
-    with ThreadPoolExecutor(max_workers=VALUATION_CONCURRENCY) as executor:
-        scored = [
-            scored_candidate
-            for scored_candidate in executor.map(score_valuation, attempted)
-            if scored_candidate is not None
-        ]
+    scored = [
+        scored_candidate
+        for scored_candidate in (score_valuation(candidate) for candidate in candidates)
+        if scored_candidate is not None
+    ]
     scored.sort(key=lambda candidate: candidate.valuation_score)
     return scored
 
@@ -171,7 +163,7 @@ def load_candidates() -> list[Candidate]:
     )
     candidates = [parse_candidate(row) for row in rows]
 
-    if MARKET == "u" and ENABLE_BTC:
+    if MARKET == "u":
         candidates.append(Candidate(symbol="BTC", description="Bitcoin"))
 
     return candidates
