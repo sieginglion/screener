@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from run_u_analyze import cached_httpx_get, load_top_company_names
 
 SCORING_BASE_URL = "http://localhost:8080"
-BTC_GROWTH_MULTIPLIER = 0.75
+BTC_GROWTH_MULTIPLIER = 1
 GROWTH_CONCURRENCY = 2
 
 
@@ -51,7 +51,7 @@ class ValuationCandidate:
 
     @property
     def power(self) -> float:
-        return self.growth_score * (0.5 - self.valuation_score)
+        return self.growth_score * self.valuation_score
 
 
 def parse_candidate(row: str) -> Candidate:
@@ -171,13 +171,17 @@ def load_candidates() -> list[Candidate]:
 
 def write_results(results: Iterable[ValuationCandidate]) -> None:
     writer = csv.writer(sys.stdout, lineterminator="\n")
-    writer.writerow(["symbol", "description", "power"])
+    writer.writerow(
+        ["symbol", "description", "growth_score", "valuation_score", "final_score"]
+    )
     for result in results:
         writer.writerow(
             [
                 result.candidate.symbol,
                 result.candidate.description,
-                f"{result.power:.6g}",
+                f"{result.growth_score:.3g}",
+                f"{result.valuation_score:.3g}",
+                f"{result.power:.3g}",
             ]
         )
 
@@ -188,6 +192,9 @@ def main() -> int:
     growth_survivors = keep_top_growth(load_candidates())
     final_survivors = score_all_valuations(growth_survivors)
     final_survivors.sort(key=lambda candidate: candidate.power, reverse=True)
+    final_survivors = [
+        candidate for candidate in final_survivors if candidate.power >= 0
+    ]
 
     write_results(final_survivors)
     return 0
