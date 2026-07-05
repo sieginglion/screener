@@ -6,16 +6,16 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import wraps
-from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 import httpx
 from config import (
+    BTC_GROWTH_MULTIPLIER,
     CANDIDATE_POOL_MULTIPLIER,
     FINMIND_THREADS,
+    GROWTH_CONCURRENCY,
     LAST_N,
     LOOKBACK_DAYS,
     MARKET,
@@ -28,15 +28,19 @@ from diskcache import Cache
 from dotenv import load_dotenv
 
 SCORING_BASE_URL = "http://localhost:8080"
-BTC_GROWTH_MULTIPLIER = 1
-GROWTH_CONCURRENCY = 2
 FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
-cache = Cache(Path().resolve() / '.cache')
+cache = Cache(Path().resolve() / ".cache")
 finmind_api = None
+
+MARKET_TIMEZONE = {
+    "u": "America/New_York",
+    "t": "Asia/Taipei",
+    "j": "Asia/Tokyo",
+}
 
 
 def candidate_pool_size(result_limit: int, multiplier: float) -> int:
@@ -53,20 +57,6 @@ def validate_candidate_pool_sizes(top_n_symbols: int, top_n_results: int) -> Non
 
 def cached(ttl):
     def decorator(f):
-        if iscoroutinefunction(f):
-
-            @wraps(f)
-            async def async_wrapper(*args, **kwargs):
-                k = (f.__module__, f.__qualname__, args, tuple(sorted(kwargs.items())))
-                if k in cache:
-                    return cache[k]
-                v = await f(*args, **kwargs)
-                cache.set(k, v, ttl)
-                return v
-
-            return async_wrapper
-
-        @wraps(f)
         def sync_wrapper(*args, **kwargs):
             k = (f.__module__, f.__qualname__, args, tuple(sorted(kwargs.items())))
             if k in cache:
@@ -81,18 +71,15 @@ def cached(ttl):
 
 
 @cached(43200)
-def cached_httpx_get(url: str, params: List[Tuple[str, str | int]]) -> httpx.Response:
+def cached_httpx_get(url: str, params: list[tuple[str, str | int]]) -> httpx.Response:
     res = httpx.get(url, params=dict(params), timeout=None)
     res.raise_for_status()
     return res
 
 
 def today_for_market() -> dt.date:
-    if MARKET == "t":
-        return dt.datetime.now(ZoneInfo("Asia/Taipei")).date()
-    if MARKET == "j":
-        return dt.datetime.now(ZoneInfo("Asia/Tokyo")).date()
-    return dt.datetime.now(ZoneInfo("America/New_York")).date()
+    timezone = MARKET_TIMEZONE.get(MARKET, MARKET_TIMEZONE["u"])
+    return dt.datetime.now(ZoneInfo(timezone)).date()
 
 
 TV_US_HEADERS = {
@@ -147,6 +134,21 @@ TV_JP_HEADERS = {
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-site",
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+}
+
+
+@dataclass(frozen=True)
+class TradingViewConfig:
+    url: str
+    headers: dict[str, str]
+    market_name: str
+    language: str
+
+
+TV_CONFIG_BY_MARKET = {
+    "u": TradingViewConfig(TV_US_URL, TV_US_HEADERS, "america", "en"),
+    "t": TradingViewConfig(TV_TW_URL, TV_TW_HEADERS, "taiwan", "zh_TW"),
+    "j": TradingViewConfig(TV_JP_URL, TV_JP_HEADERS, "japan", "ja"),
 }
 
 
@@ -230,28 +232,11 @@ def tradingview_payload(market_name: str, language: str, limit: int) -> dict:
     }
 
 
-TV_US_PAYLOAD = tradingview_payload(
-    "america",
-    "en",
-    candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER),
-)
-TV_TW_PAYLOAD = tradingview_payload(
-    "taiwan",
-    "zh_TW",
-    candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER),
-)
-TV_JP_PAYLOAD = tradingview_payload(
-    "japan",
-    "ja",
-    candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER),
-)
-
-
-def scalar_score(value):
+def scalar_score(value: Any) -> float:
     return float(value)
 
 
-def mean(values):
+def mean(values: Iterable[float | None]) -> float:
     values = [value for value in values if value is not None]
     return sum(values) / len(values)
 
@@ -291,13 +276,21 @@ def adjusted_growth_score(symbol: str, score: float) -> float:
     return score
 
 
-def fetch_score(path: str, params: dict[str, str | int], selector) -> float:
+def fetch_score(
+    path: str,
+    params: dict[str, str | int],
+    selector: Callable[[Any], float],
+) -> float:
     response = cached_httpx_get(
         f"{SCORING_BASE_URL}/{path}",
         params=list(params.items()),
     )
     values = response.json()
     return selector(values)
+
+
+def current_tv_config() -> TradingViewConfig:
+    return TV_CONFIG_BY_MARKET.get(MARKET, TV_CONFIG_BY_MARKET["u"])
 
 
 def score_growth(candidate: Candidate) -> GrowthCandidate | None:
@@ -354,15 +347,17 @@ def parse_candidate(row: str) -> Candidate:
 
 
 def fetch_symbols_from_tv(
-    tv_url: str,
-    tv_headers: dict[str, str],
-    tv_payload: dict[str, Any],
+    tv_config: TradingViewConfig,
     top_n_symbols: int,
-) -> List[Tuple[str, str]]:
-    payload = dict(tv_payload)
-    payload["range"] = [0, top_n_symbols]
+) -> list[tuple[str, str]]:
+    payload = tradingview_payload(
+        tv_config.market_name,
+        tv_config.language,
+        top_n_symbols,
+    )
     with httpx.Client() as client:
-        response = client.post(tv_url, headers=tv_headers, json=payload)
+        response = client.post(tv_config.url, headers=tv_config.headers, json=payload)
+        response.raise_for_status()
         data = response.json()
 
         def normalize(name: str) -> str:
@@ -376,7 +371,7 @@ def fetch_symbols_from_tv(
 
 def fetch_trading_dollar_fmp(
     symbol: str, description: str, from_date: str, api_key: str
-) -> Tuple[str, str, float]:
+) -> tuple[str, str, float]:
     fmp_symbol = f"{symbol}.T" if MARKET == "j" else symbol
     res = cached_httpx_get(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if MARKET == "j" else FMP_STABLE_URL,
@@ -399,21 +394,27 @@ def fetch_trading_dollar_fmp(
     return symbol, description, sum(row["vwap"] * row["volume"] for row in rows)
 
 
+def top_company_names(
+    results: Iterable[tuple[str, str, float]],
+    limit: int,
+) -> list[str]:
+    top = sorted(results, key=lambda x: x[2], reverse=True)[:limit]
+    return [
+        f"{symbol} {description.replace(';', ',')}" for symbol, description, _ in top
+    ]
+
+
 def load_top_company_names_fmp(
     api_key: str | None,
     top_n_symbols: int,
     top_n_results: int,
-    tv_url: str,
-    tv_headers: dict[str, str],
-    tv_payload: dict[str, Any],
-) -> List[str]:
+    tv_config: TradingViewConfig,
+) -> list[str]:
     validate_candidate_pool_sizes(top_n_symbols, top_n_results)
 
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
-        tv_url=tv_url,
-        tv_headers=tv_headers,
-        tv_payload=tv_payload,
+        tv_config=tv_config,
         top_n_symbols=top_n_symbols,
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
@@ -425,23 +426,7 @@ def load_top_company_names_fmp(
         for symbol, description in stocks
     ]
 
-    top = sorted(results, key=lambda x: x[2], reverse=True)[:top_n_results]
-    return [
-        f"{symbol} {description.replace(';', ',')}" for symbol, description, _ in top
-    ]
-
-
-def load_top_company_names_us(
-    api_key: str | None, top_n_symbols: int, top_n_results: int
-) -> List[str]:
-    return load_top_company_names_fmp(
-        api_key,
-        top_n_symbols,
-        top_n_results,
-        TV_US_URL,
-        TV_US_HEADERS,
-        TV_US_PAYLOAD,
-    )
+    return top_company_names(results, top_n_results)
 
 
 @cached(43200)
@@ -456,13 +441,15 @@ def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str):
 
 def fetch_trading_dollar_tw(
     stock_id: str, description: str, start: str, end: str
-) -> Tuple[str, str, float]:
+) -> tuple[str, str, float]:
     df = fetch_taiwan_stock_daily(stock_id, start, end)
     total = df.sort_values("date", ascending=False).head(LAST_N)["Trading_money"].sum()
     return stock_id, description, float(total)
 
 
-def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[str]:
+def load_top_company_names_tw(
+    top_n_symbols: int, top_n_results: int, tv_config: TradingViewConfig
+) -> list[str]:
     global finmind_api
 
     validate_candidate_pool_sizes(top_n_symbols, top_n_results)
@@ -476,9 +463,7 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
 
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
-        tv_url=TV_TW_URL,
-        tv_headers=TV_TW_HEADERS,
-        tv_payload=TV_TW_PAYLOAD,
+        tv_config=tv_config,
         top_n_symbols=top_n_symbols,
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
@@ -496,33 +481,21 @@ def load_top_company_names_tw(top_n_symbols: int, top_n_results: int) -> List[st
             )
         )
 
-    top = sorted(results, key=lambda x: x[2], reverse=True)[:top_n_results]
-    return [
-        f"{symbol} {description.replace(';', ',')}" for symbol, description, _ in top
-    ]
-
-
-def load_top_company_names_jp(
-    api_key: str | None, top_n_symbols: int, top_n_results: int
-) -> List[str]:
-    return load_top_company_names_fmp(
-        api_key,
-        top_n_symbols,
-        top_n_results,
-        TV_JP_URL,
-        TV_JP_HEADERS,
-        TV_JP_PAYLOAD,
-    )
+    return top_company_names(results, top_n_results)
 
 
 def load_top_company_names(
     api_key: str | None, top_n_symbols: int, top_n_results: int
-) -> List[str]:
+) -> list[str]:
+    tv_config = current_tv_config()
     if MARKET == "t":
-        return load_top_company_names_tw(top_n_symbols, top_n_results)
-    if MARKET == "j":
-        return load_top_company_names_jp(api_key, top_n_symbols, top_n_results)
-    return load_top_company_names_us(api_key, top_n_symbols, top_n_results)
+        return load_top_company_names_tw(top_n_symbols, top_n_results, tv_config)
+    return load_top_company_names_fmp(
+        api_key,
+        top_n_symbols,
+        top_n_results,
+        tv_config,
+    )
 
 
 def keep_top_growth(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
