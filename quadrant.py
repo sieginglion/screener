@@ -179,12 +179,11 @@ def type_filter(stock_type: str, *typespecs: str) -> dict:
 def tradingview_payload(market_name: str, language: str, limit: int) -> dict:
     return {
         "columns": ["ticker-view"],
-        # "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
+        "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
         "ignore_unknown_fields": False,
         "options": {"lang": language},
         "range": [0, limit],
         "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
-        "symbols": {},
         "markets": [market_name],
         "filter2": {
             "operator": "and",
@@ -211,7 +210,7 @@ def tradingview_payload(market_name: str, language: str, limit: int) -> dict:
                                             "expression": {
                                                 "left": "typespecs",
                                                 "operation": "has_none_of",
-                                                "right": ["etf", "mutual", "closedend"],
+                                                "right": ["etf", "mutual"],
                                             }
                                         },
                                     ],
@@ -539,17 +538,11 @@ def load_candidates() -> list[Candidate]:
 
 def write_results(results: Iterable[ValuationCandidate]) -> None:
     writer = csv.writer(sys.stdout, lineterminator="\n")
-    writer.writerow(
-        ["symbol", "description", "growth_score", "valuation_score", "final_score"]
-    )
     for result in results:
         writer.writerow(
             [
                 result.candidate.symbol,
                 result.candidate.description,
-                f"{result.growth_score:.3g}",
-                f"{result.valuation_score:.3g}",
-                f"{result.power:.3g}",
             ]
         )
 
