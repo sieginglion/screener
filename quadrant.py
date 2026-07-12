@@ -17,7 +17,6 @@ from config import (
     FINMIND_THREADS,
     GROWTH_CONCURRENCY,
     LAST_N,
-    LOOKBACK_DAYS,
     MARKET,
     RESULT_LIMIT,
     TV_SORT_WINDOW,
@@ -29,6 +28,7 @@ from dotenv import load_dotenv
 SCORING_BASE_URL = "http://localhost:8080"
 FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
+LOOKBACK_DAYS = 28
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
