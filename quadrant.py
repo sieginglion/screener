@@ -492,7 +492,7 @@ def load_top_company_names(
     )
 
 
-def keep_top_growth(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
+def score_growth_candidates(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
     attempted = list(candidates)
     with ThreadPoolExecutor(max_workers=GROWTH_CONCURRENCY) as executor:
         scored = [
@@ -512,7 +512,6 @@ def score_all_valuations(
         for scored_candidate in (score_valuation(candidate) for candidate in candidates)
         if scored_candidate is not None
     ]
-    scored.sort(key=lambda candidate: candidate.valuation_score)
     return scored
 
 
@@ -545,14 +544,15 @@ def write_results(results: Iterable[ValuationCandidate]) -> None:
 def main() -> int:
     load_dotenv()
 
-    growth_survivors = keep_top_growth(load_candidates())
-    final_survivors = score_all_valuations(growth_survivors)
-    final_survivors.sort(key=lambda candidate: candidate.power, reverse=True)
-    final_survivors = [
-        candidate for candidate in final_survivors if candidate.power >= 0
-    ]
+    growth_candidates = score_growth_candidates(load_candidates())
+    scored_candidates = score_all_valuations(growth_candidates)
+    ranked_candidates = sorted(
+        (candidate for candidate in scored_candidates if candidate.power >= 0),
+        key=lambda candidate: candidate.power,
+        reverse=True,
+    )
 
-    write_results(final_survivors)
+    write_results(ranked_candidates)
     return 0
 
 
