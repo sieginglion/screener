@@ -19,7 +19,6 @@ from config import (
     LAST_N,
     LOOKBACK_DAYS,
     MARKET,
-    PEAK_CUTOFF_RATIO,
     RESULT_LIMIT,
     TV_SORT_WINDOW,
     Q,
@@ -336,10 +335,6 @@ def score_valuation(candidate: GrowthCandidate) -> ValuationCandidate | None:
     )
 
 
-def keep_count(attempt_count: int) -> int:
-    return math.ceil(attempt_count * PEAK_CUTOFF_RATIO)
-
-
 def parse_candidate(row: str) -> Candidate:
     symbol, description = row.split(maxsplit=1)
     return Candidate(symbol=symbol, description=description)
@@ -506,7 +501,7 @@ def keep_top_growth(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
             if scored_candidate is not None
         ]
     scored.sort(key=lambda candidate: candidate.growth_score, reverse=True)
-    return scored[: keep_count(len(attempted))]
+    return scored
 
 
 def score_all_valuations(
