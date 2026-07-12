@@ -398,11 +398,13 @@ def top_company_names(
     ]
 
 
-def load_top_company_names_fmp(
-    api_key: str | None,
+def load_top_company_names_by_liquidity(
     top_n_symbols: int,
     top_n_results: int,
     tv_config: TradingViewConfig,
+    fetch_trading_dollars: Callable[
+        [list[tuple[str, str]]], Iterable[tuple[str, str, float]]
+    ],
 ) -> list[str]:
     validate_candidate_pool_sizes(top_n_symbols, top_n_results)
 
@@ -413,14 +415,32 @@ def load_top_company_names_fmp(
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
-    from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
-    sys.stderr.write("Fetching trading dollar data from FMP...\n")
-    results = [
-        fetch_trading_dollar_fmp(symbol, description, from_date, api_key)
-        for symbol, description in stocks
-    ]
+    return top_company_names(fetch_trading_dollars(stocks), top_n_results)
 
-    return top_company_names(results, top_n_results)
+
+def load_top_company_names_fmp(
+    api_key: str | None,
+    top_n_symbols: int,
+    top_n_results: int,
+    tv_config: TradingViewConfig,
+) -> list[str]:
+    from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
+
+    def fetch_trading_dollars(
+        stocks: list[tuple[str, str]],
+    ) -> list[tuple[str, str, float]]:
+        sys.stderr.write("Fetching trading dollar data from FMP...\n")
+        return [
+            fetch_trading_dollar_fmp(symbol, description, from_date, api_key)
+            for symbol, description in stocks
+        ]
+
+    return load_top_company_names_by_liquidity(
+        top_n_symbols,
+        top_n_results,
+        tv_config,
+        fetch_trading_dollars,
+    )
 
 
 @cached(43200)
@@ -444,38 +464,37 @@ def fetch_trading_dollar_tw(
 def load_top_company_names_tw(
     top_n_symbols: int, top_n_results: int, tv_config: TradingViewConfig
 ) -> list[str]:
-    global finmind_api
-
-    validate_candidate_pool_sizes(top_n_symbols, top_n_results)
-
     finmind_key = os.environ.get("FINMIND_KEY")
-
-    from FinMind.data import DataLoader
-
-    finmind_api = DataLoader()
-    finmind_api.login_by_token(finmind_key)
-
-    sys.stderr.write("Fetching symbols from TradingView...\n")
-    stocks = fetch_symbols_from_tv(
-        tv_config=tv_config,
-        top_n_symbols=top_n_symbols,
-    )
-    sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
     today = today_for_market()
     start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     end = today.isoformat()
 
-    sys.stderr.write("Fetching trading dollar data from FinMind...\n")
-    with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
-        results = list(
-            pool.map(
-                lambda s: fetch_trading_dollar_tw(s[0], s[1], start, end),
-                stocks,
-            )
-        )
+    def fetch_trading_dollars(
+        stocks: list[tuple[str, str]],
+    ) -> list[tuple[str, str, float]]:
+        global finmind_api
 
-    return top_company_names(results, top_n_results)
+        from FinMind.data import DataLoader
+
+        finmind_api = DataLoader()
+        finmind_api.login_by_token(finmind_key)
+
+        sys.stderr.write("Fetching trading dollar data from FinMind...\n")
+        with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
+            return list(
+                pool.map(
+                    lambda s: fetch_trading_dollar_tw(s[0], s[1], start, end),
+                    stocks,
+                )
+            )
+
+    return load_top_company_names_by_liquidity(
+        top_n_symbols,
+        top_n_results,
+        tv_config,
+        fetch_trading_dollars,
+    )
 
 
 def load_top_company_names(
