@@ -280,10 +280,12 @@ def fetch_score(
     params: dict[str, str | int],
     selector: Callable[[Any], float],
 ) -> float:
-    response = cached_httpx_get(
+    response = httpx.get(
         f"{SCORING_BASE_URL}/{path}",
-        params=list(params.items()),
+        params=params,
+        timeout=None,
     )
+    response.raise_for_status()
     values = response.json()
     return selector(values)
 
