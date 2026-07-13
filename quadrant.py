@@ -16,6 +16,7 @@ from config import (
     CANDIDATE_POOL_MULTIPLIER,
     FINMIND_THREADS,
     GROWTH_CONCURRENCY,
+    GROWTH_ENABLED,
     LAST_N,
     MARKET,
     RESULT_LIMIT,
@@ -513,6 +514,12 @@ def load_top_company_names(
 
 def score_growth_candidates(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
     attempted = list(candidates)
+    if not GROWTH_ENABLED:
+        return [
+            GrowthCandidate(candidate=candidate, growth_score=1)
+            for candidate in attempted
+        ]
+
     with ThreadPoolExecutor(max_workers=GROWTH_CONCURRENCY) as executor:
         scored = [
             scored_candidate

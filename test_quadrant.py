@@ -103,5 +103,28 @@ class LoadTopCompanyNamesTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
 
 
+class GrowthScoringTests(unittest.TestCase):
+    def test_growth_scoring_can_be_disabled(self):
+        candidates = [
+            quadrant.Candidate(symbol="A", description="Alpha"),
+            quadrant.Candidate(symbol="B", description="Beta"),
+        ]
+
+        with (
+            patch.object(quadrant, "GROWTH_ENABLED", False),
+            patch("quadrant.score_growth") as score_growth,
+        ):
+            result = quadrant.score_growth_candidates(candidates)
+
+        score_growth.assert_not_called()
+        self.assertEqual(
+            result,
+            [
+                quadrant.GrowthCandidate(candidate=candidates[0], growth_score=1),
+                quadrant.GrowthCandidate(candidate=candidates[1], growth_score=1),
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
