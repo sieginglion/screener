@@ -566,7 +566,7 @@ def main() -> int:
     growth_candidates = score_growth_candidates(load_candidates())
     scored_candidates = score_all_valuations(growth_candidates)
     ranked_candidates = sorted(
-        (candidate for candidate in scored_candidates if candidate.power >= 0),
+        (candidate for candidate in scored_candidates if candidate.power > 0),
         key=lambda candidate: candidate.power,
         reverse=True,
     )
