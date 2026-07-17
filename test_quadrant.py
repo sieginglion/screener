@@ -1,10 +1,65 @@
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock, Mock, call, patch
 from zoneinfo import ZoneInfo
 
+import clear_ticker_cache
 import quadrant
+
+
+class CachedGetJsonTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.cache = quadrant.Cache(self.temporary_directory.name)
+        self.cache_patch = patch.object(quadrant, "cache", self.cache)
+        self.cache_patch.start()
+
+    def tearDown(self):
+        self.cache_patch.stop()
+        self.cache.close()
+        self.temporary_directory.cleanup()
+
+    def test_returns_json_and_reuses_a_cached_response(self):
+        url = "https://example.com/prices"
+        params = [("symbol", "ABC"), ("apikey", "test-key")]
+        payload = [{"date": "2026-07-17", "vwap": 10, "volume": 2}]
+        response = Mock()
+        response.json.return_value = payload
+
+        with patch.object(quadrant.httpx, "get", return_value=response) as get:
+            self.assertEqual(quadrant.cached_get_json(url, params), payload)
+            self.assertEqual(quadrant.cached_get_json(url, params), payload)
+
+        get.assert_called_once_with(url, params=dict(params), timeout=None)
+        response.raise_for_status.assert_called_once_with()
+        response.json.assert_called_once_with()
+
+    def test_does_not_cache_a_failed_response(self):
+        url = "https://example.com/prices"
+        params = [("symbol", "ABC"), ("apikey", "test-key")]
+        request = quadrant.httpx.Request("GET", url)
+        response = quadrant.httpx.Response(500, request=request)
+
+        with patch.object(quadrant.httpx, "get", return_value=response) as get:
+            for _ in range(2):
+                with self.assertRaises(quadrant.httpx.HTTPStatusError):
+                    quadrant.cached_get_json(url, params)
+
+        self.assertEqual(get.call_count, 2)
+
+
+class CacheClearingTests(unittest.TestCase):
+    def test_liquidity_cache_matcher_recognizes_cached_json_entries(self):
+        key = (
+            quadrant.__name__,
+            "cached_get_json",
+            (quadrant.FMP_STABLE_URL,),
+            (),
+        )
+
+        self.assertTrue(clear_ticker_cache.key_matches_liquidity(key))
 
 
 class MarketConfigurationTests(unittest.TestCase):
@@ -317,8 +372,7 @@ class IntradayLiquidityTests(unittest.TestCase):
                 )
 
     def test_fmp_excludes_todays_row_during_new_york_regular_session(self):
-        response = Mock()
-        response.json.return_value = [
+        data = [
             {"date": "2026-07-17", "vwap": 100, "volume": 1},
             {"date": "2026-07-16", "vwap": 5, "volume": 1},
             {"date": "2026-07-15", "vwap": 4, "volume": 1},
@@ -331,7 +385,7 @@ class IntradayLiquidityTests(unittest.TestCase):
             patch(
                 "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
             ),
-            patch("quadrant.cached_httpx_get", return_value=response) as fetch,
+            patch("quadrant.cached_get_json", return_value=data) as fetch,
         ):
             result = quadrant.fetch_trading_dollar_fmp(
                 "ABC", "Example Corp.", "2026-05-22", "test-key"
@@ -348,8 +402,7 @@ class IntradayLiquidityTests(unittest.TestCase):
         self.assertEqual(result, ("ABC", "Example Corp.", 9))
 
     def test_fmp_keeps_todays_row_outside_the_us_market(self):
-        response = Mock()
-        response.json.return_value = {
+        data = {
             "historical": [
                 {"date": "2026-07-17", "vwap": 100, "volume": 1},
                 {"date": "2026-07-16", "vwap": 5, "volume": 1},
@@ -362,7 +415,7 @@ class IntradayLiquidityTests(unittest.TestCase):
             patch(
                 "quadrant.new_york_regular_session_in_progress", return_value=True
             ) as in_session,
-            patch("quadrant.cached_httpx_get", return_value=response) as fetch,
+            patch("quadrant.cached_get_json", return_value=data) as fetch,
         ):
             result = quadrant.fetch_trading_dollar_fmp(
                 "7203", "Toyota", "2026-05-22", "test-key"

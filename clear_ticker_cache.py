@@ -3,7 +3,7 @@
 
 import argparse
 
-from run_u_analyze import FMP_STABLE_URL, cache
+from quadrant import FMP_STABLE_URL, cache
 
 
 def key_matches_ticker(key, ticker: str) -> bool:
@@ -52,7 +52,7 @@ def key_matches_url(key, url: str) -> bool:
 
 def key_matches_liquidity(key) -> bool:
     return key_matches_function(key, "load_top_company_names_us") or (
-        key_matches_function(key, "cached_httpx_get")
+        key_matches_function(key, "cached_get_json")
         and key_matches_url(key, FMP_STABLE_URL)
     )
 
@@ -96,9 +96,7 @@ def main() -> int:
         )
     )
     if selected_modes != 1:
-        parser.error(
-            "provide exactly one of: ticker, --portman, or --liquidity"
-        )
+        parser.error("provide exactly one of: ticker, --portman, or --liquidity")
 
     if args.clear_scoring_caches:
         endpoints = ("/growths", "/scores")

@@ -66,10 +66,10 @@ def cached(ttl):
 
 
 @cached(43200)
-def cached_httpx_get(url: str, params: list[tuple[str, str | int]]) -> httpx.Response:
-    res = httpx.get(url, params=dict(params), timeout=None)
-    res.raise_for_status()
-    return res
+def cached_get_json(url: str, params: list[tuple[str, str | int]]) -> Any:
+    response = httpx.get(url, params=dict(params), timeout=None)
+    response.raise_for_status()
+    return response.json()
 
 
 def new_york_regular_session_in_progress(now: dt.datetime | None = None) -> bool:
@@ -384,7 +384,7 @@ def fetch_trading_dollar_fmp(
 ) -> tuple[str, str, float]:
     market = current_market_config()
     fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
-    res = cached_httpx_get(
+    data = cached_get_json(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
         params=[
             ("apikey", api_key),
@@ -392,7 +392,6 @@ def fetch_trading_dollar_fmp(
             *([] if market.fmp_legacy else [("symbol", fmp_symbol)]),
         ],
     )
-    data = res.json()
     rows = data.get("historical", []) if market.fmp_legacy else data
 
     if market.exclude_intraday_fmp_row and new_york_regular_session_in_progress():
