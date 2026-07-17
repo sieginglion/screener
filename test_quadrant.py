@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import quadrant
 
 
-class LoadTopCompanyNamesTests(unittest.TestCase):
+class LoadTopCandidatesTests(unittest.TestCase):
     tv_config = quadrant.TradingViewConfig(
         url="https://example.com/scan",
         headers={},
@@ -24,20 +24,26 @@ class LoadTopCompanyNamesTests(unittest.TestCase):
         )
 
         with patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks) as fetch:
-            result = quadrant.load_top_company_names_by_liquidity(
+            result = quadrant.load_top_candidates_by_liquidity(
                 top_n_symbols=3,
                 top_n_results=2,
                 tv_config=self.tv_config,
                 fetch_trading_dollars=fetch_trading_dollars,
             )
 
-        self.assertEqual(result, ["B Beta", "A Alpha, Inc."])
+        self.assertEqual(
+            result,
+            [
+                quadrant.Candidate(symbol="B", description="Beta"),
+                quadrant.Candidate(symbol="A", description="Alpha; Inc."),
+            ],
+        )
         fetch.assert_called_once_with(tv_config=self.tv_config, top_n_symbols=3)
         fetch_trading_dollars.assert_called_once_with(self.stocks)
 
     def test_shared_loader_rejects_a_pool_that_cannot_be_reranked(self):
         with self.assertRaisesRegex(ValueError, "top_n_symbols must be greater"):
-            quadrant.load_top_company_names_by_liquidity(
+            quadrant.load_top_candidates_by_liquidity(
                 top_n_symbols=2,
                 top_n_results=2,
                 tv_config=self.tv_config,
@@ -55,14 +61,20 @@ class LoadTopCompanyNamesTests(unittest.TestCase):
                 side_effect=trading_dollars,
             ) as fetch,
         ):
-            result = quadrant.load_top_company_names_fmp(
+            result = quadrant.load_top_candidates_fmp(
                 api_key="test-key",
                 top_n_symbols=3,
                 top_n_results=2,
                 tv_config=self.tv_config,
             )
 
-        self.assertEqual(result, ["B Beta", "A Alpha, Inc."])
+        self.assertEqual(
+            result,
+            [
+                quadrant.Candidate(symbol="B", description="Beta"),
+                quadrant.Candidate(symbol="A", description="Alpha; Inc."),
+            ],
+        )
         self.assertEqual(fetch.call_count, 2)
         self.assertEqual(fetch.call_args_list[0].args[:2], ("A", "Alpha; Inc."))
         self.assertEqual(fetch.call_args_list[1].args[:2], ("B", "Beta"))
@@ -91,13 +103,19 @@ class LoadTopCompanyNamesTests(unittest.TestCase):
                 side_effect=trading_dollars,
             ) as fetch,
         ):
-            result = quadrant.load_top_company_names_tw(
+            result = quadrant.load_top_candidates_tw(
                 top_n_symbols=3,
                 top_n_results=2,
                 tv_config=self.tv_config,
             )
 
-        self.assertEqual(result, ["B Beta", "A Alpha, Inc."])
+        self.assertEqual(
+            result,
+            [
+                quadrant.Candidate(symbol="B", description="Beta"),
+                quadrant.Candidate(symbol="A", description="Alpha; Inc."),
+            ],
+        )
         data_loader.assert_called_once_with()
         loader.login_by_token.assert_called_once_with("test-key")
         self.assertEqual(fetch.call_count, 2)

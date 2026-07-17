@@ -344,11 +344,6 @@ def score_valuation(candidate: GrowthCandidate) -> ValuationCandidate | None:
     )
 
 
-def parse_candidate(row: str) -> Candidate:
-    symbol, description = row.split(maxsplit=1)
-    return Candidate(symbol=symbol, description=description)
-
-
 def fetch_symbols_from_tv(
     tv_config: TradingViewConfig,
     top_n_symbols: int,
@@ -400,17 +395,18 @@ def fetch_trading_dollar_fmp(
     return symbol, description, sum(row["vwap"] * row["volume"] for row in rows)
 
 
-def top_company_names(
+def top_candidates(
     results: Iterable[tuple[str, str, float]],
     limit: int,
-) -> list[str]:
+) -> list[Candidate]:
     top = sorted(results, key=lambda x: x[2], reverse=True)[:limit]
     return [
-        f"{symbol} {description.replace(';', ',')}" for symbol, description, _ in top
+        Candidate(symbol=symbol, description=description)
+        for symbol, description, _ in top
     ]
 
 
-def load_top_company_names_by_liquidity(
+def load_top_candidates_by_liquidity(
     top_n_symbols: int,
     top_n_results: int,
     tv_config: TradingViewConfig,
@@ -427,15 +423,15 @@ def load_top_company_names_by_liquidity(
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
-    return top_company_names(fetch_trading_dollars(stocks), top_n_results)
+    return top_candidates(fetch_trading_dollars(stocks), top_n_results)
 
 
-def load_top_company_names_fmp(
+def load_top_candidates_fmp(
     api_key: str | None,
     top_n_symbols: int,
     top_n_results: int,
     tv_config: TradingViewConfig,
-) -> list[str]:
+) -> list[Candidate]:
     from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
 
     def fetch_trading_dollars(
@@ -447,7 +443,7 @@ def load_top_company_names_fmp(
             for symbol, description in stocks
         ]
 
-    return load_top_company_names_by_liquidity(
+    return load_top_candidates_by_liquidity(
         top_n_symbols,
         top_n_results,
         tv_config,
@@ -473,9 +469,9 @@ def fetch_trading_dollar_tw(
     return stock_id, description, float(total)
 
 
-def load_top_company_names_tw(
+def load_top_candidates_tw(
     top_n_symbols: int, top_n_results: int, tv_config: TradingViewConfig
-) -> list[str]:
+) -> list[Candidate]:
     finmind_key = os.environ.get("FINMIND_KEY")
 
     today = today_for_market()
@@ -501,7 +497,7 @@ def load_top_company_names_tw(
                 )
             )
 
-    return load_top_company_names_by_liquidity(
+    return load_top_candidates_by_liquidity(
         top_n_symbols,
         top_n_results,
         tv_config,
@@ -509,13 +505,13 @@ def load_top_company_names_tw(
     )
 
 
-def load_top_company_names(
+def load_top_candidates(
     api_key: str | None, top_n_symbols: int, top_n_results: int
-) -> list[str]:
+) -> list[Candidate]:
     tv_config = current_tv_config()
     if MARKET == "t":
-        return load_top_company_names_tw(top_n_symbols, top_n_results, tv_config)
-    return load_top_company_names_fmp(
+        return load_top_candidates_tw(top_n_symbols, top_n_results, tv_config)
+    return load_top_candidates_fmp(
         api_key,
         top_n_symbols,
         top_n_results,
@@ -537,7 +533,6 @@ def score_growth_candidates(candidates: Iterable[Candidate]) -> list[GrowthCandi
             for scored_candidate in executor.map(score_growth, attempted)
             if scored_candidate is not None
         ]
-    scored.sort(key=lambda candidate: candidate.growth_score, reverse=True)
     return scored
 
 
@@ -554,12 +549,11 @@ def score_all_valuations(
 
 def load_candidates() -> list[Candidate]:
     pool_size = candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER)
-    rows = load_top_company_names(
+    candidates = load_top_candidates(
         api_key=os.environ.get("FMP_API_KEY"),
         top_n_symbols=pool_size,
         top_n_results=RESULT_LIMIT,
     )
-    candidates = [parse_candidate(row) for row in rows]
 
     if MARKET == "u":
         candidates.append(Candidate(symbol="BTC", description="Bitcoin"))
