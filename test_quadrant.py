@@ -356,6 +356,68 @@ class GrowthScoringTests(unittest.TestCase):
         )
         self.assertEqual(scored_candidate.power, 6)
 
+    def test_scoring_uses_the_expected_endpoint_parameters_and_parser(self):
+        candidate = quadrant.Candidate(symbol="A", description="Alpha")
+
+        with (
+            patch("quadrant.candidate_market", return_value="u") as candidate_market,
+            patch("quadrant.fetch_score", return_value=2) as fetch_score,
+        ):
+            quadrant.score_growth(candidate)
+
+        candidate_market.assert_called_once_with("A")
+        fetch_score.assert_called_once_with(
+            "growth",
+            {"market": "u", "symbol": "A"},
+            quadrant.scalar_score,
+        )
+
+        with (
+            patch("quadrant.candidate_market", return_value="u") as candidate_market,
+            patch("quadrant.fetch_score", return_value=2) as fetch_score,
+        ):
+            quadrant.score_valuation(candidate)
+
+        candidate_market.assert_called_once_with("A")
+        fetch_score.assert_called_once_with(
+            "scores",
+            {"market": "u", "symbol": "A", "q": quadrant.Q},
+            quadrant.mean,
+        )
+
+    def test_scoring_failure_skips_the_candidate_with_a_message(self):
+        candidate = quadrant.Candidate(symbol="A", description="Alpha")
+
+        for scorer, score_label in (
+            (quadrant.score_growth, "growth score"),
+            (quadrant.score_valuation, "valuation score"),
+        ):
+            with (
+                self.subTest(scorer=scorer.__name__),
+                patch("quadrant.fetch_score", side_effect=RuntimeError("unavailable")),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            ):
+                self.assertIsNone(scorer(candidate))
+
+            self.assertEqual(
+                stderr.getvalue(),
+                f"Skipping A {score_label}: unavailable\n",
+            )
+
+    def test_growth_applies_the_bitcoin_multiplier_only_to_bitcoin(self):
+        bitcoin = quadrant.Candidate(symbol="BTC", description="Bitcoin")
+        stock = quadrant.Candidate(symbol="A", description="Alpha")
+
+        with (
+            patch.object(quadrant, "BTC_GROWTH_MULTIPLIER", 2),
+            patch("quadrant.fetch_score", return_value=3),
+        ):
+            bitcoin_result = quadrant.score_growth(bitcoin)
+            stock_result = quadrant.score_growth(stock)
+
+        self.assertEqual(bitcoin_result.growth_score, 6)
+        self.assertEqual(stock_result.growth_score, 3)
+
     def test_growth_scoring_can_be_disabled(self):
         candidates = [
             quadrant.Candidate(symbol="A", description="Alpha"),

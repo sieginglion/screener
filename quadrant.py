@@ -303,44 +303,53 @@ def fetch_score(
     return selector(values)
 
 
-def score_growth(candidate: Candidate) -> Candidate | None:
+def score_candidate(
+    candidate: Candidate,
+    *,
+    path: str,
+    params: dict[str, str | int],
+    selector: Callable[[Any], float],
+    score_field: str,
+    transform: Callable[[str, float], float] | None = None,
+) -> Candidate | None:
     try:
-        score = fetch_score(
-            "growth",
-            {
-                "market": candidate_market(candidate.symbol),
-                "symbol": candidate.symbol,
-            },
-            scalar_score,
-        )
+        score = fetch_score(path, params, selector)
     except Exception as exc:
-        sys.stderr.write(f"Skipping {candidate.symbol} growth score: {exc}\n")
+        sys.stderr.write(
+            f"Skipping {candidate.symbol} {score_field.replace('_', ' ')}: {exc}\n"
+        )
         return None
 
-    return replace(
+    if transform is not None:
+        score = transform(candidate.symbol, score)
+    return replace(candidate, **{score_field: score})
+
+
+def score_growth(candidate: Candidate) -> Candidate | None:
+    return score_candidate(
         candidate,
-        growth_score=adjusted_growth_score(candidate.symbol, score),
+        path="growth",
+        params={
+            "market": candidate_market(candidate.symbol),
+            "symbol": candidate.symbol,
+        },
+        selector=scalar_score,
+        score_field="growth_score",
+        transform=adjusted_growth_score,
     )
 
 
 def score_valuation(candidate: Candidate) -> Candidate | None:
-    try:
-        score = fetch_score(
-            "scores",
-            {
-                "market": candidate_market(candidate.symbol),
-                "symbol": candidate.symbol,
-                "q": Q,
-            },
-            mean,
-        )
-    except Exception as exc:
-        sys.stderr.write(f"Skipping {candidate.symbol} valuation score: {exc}\n")
-        return None
-
-    return replace(
+    return score_candidate(
         candidate,
-        valuation_score=score,
+        path="scores",
+        params={
+            "market": candidate_market(candidate.symbol),
+            "symbol": candidate.symbol,
+            "q": Q,
+        },
+        selector=mean,
+        score_field="valuation_score",
     )
 
 
