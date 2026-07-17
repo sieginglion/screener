@@ -126,5 +126,69 @@ class GrowthScoringTests(unittest.TestCase):
         )
 
 
+class IntradayLiquidityTests(unittest.TestCase):
+    def test_new_york_regular_session_boundaries(self):
+        timezone = quadrant.NEW_YORK_TIMEZONE
+
+        for hour, minute, expected in [
+            (9, 29, False),
+            (9, 30, True),
+            (15, 59, True),
+            (16, 0, False),
+        ]:
+            with self.subTest(hour=hour, minute=minute):
+                now = quadrant.dt.datetime(2026, 7, 17, hour, minute, tzinfo=timezone)
+                self.assertEqual(
+                    quadrant.new_york_regular_session_in_progress(now), expected
+                )
+
+    def test_fmp_excludes_todays_row_during_new_york_regular_session(self):
+        response = Mock()
+        response.json.return_value = [
+            {"date": "2026-07-17", "vwap": 100, "volume": 1},
+            {"date": "2026-07-16", "vwap": 5, "volume": 1},
+            {"date": "2026-07-15", "vwap": 4, "volume": 1},
+        ]
+
+        with (
+            patch.object(quadrant, "MARKET", "u"),
+            patch.object(quadrant, "LAST_N", 2),
+            patch("quadrant.new_york_regular_session_in_progress", return_value=True),
+            patch(
+                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
+            ),
+            patch("quadrant.cached_httpx_get", return_value=response),
+        ):
+            result = quadrant.fetch_trading_dollar_fmp(
+                "ABC", "Example Corp.", "2026-05-22", "test-key"
+            )
+
+        self.assertEqual(result, ("ABC", "Example Corp.", 9))
+
+    def test_fmp_keeps_todays_row_outside_the_us_market(self):
+        response = Mock()
+        response.json.return_value = {
+            "historical": [
+                {"date": "2026-07-17", "vwap": 100, "volume": 1},
+                {"date": "2026-07-16", "vwap": 5, "volume": 1},
+            ]
+        }
+
+        with (
+            patch.object(quadrant, "MARKET", "j"),
+            patch.object(quadrant, "LAST_N", 2),
+            patch(
+                "quadrant.new_york_regular_session_in_progress", return_value=True
+            ) as in_session,
+            patch("quadrant.cached_httpx_get", return_value=response),
+        ):
+            result = quadrant.fetch_trading_dollar_fmp(
+                "7203", "Toyota", "2026-05-22", "test-key"
+            )
+
+        in_session.assert_not_called()
+        self.assertEqual(result, ("7203", "Toyota", 105))
+
+
 if __name__ == "__main__":
     unittest.main()

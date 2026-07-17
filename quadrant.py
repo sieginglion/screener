@@ -29,7 +29,8 @@ from dotenv import load_dotenv
 SCORING_BASE_URL = "http://localhost:8080"
 FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
-LOOKBACK_DAYS = 28
+LOOKBACK_DAYS = 56
+NEW_YORK_TIMEZONE = ZoneInfo("America/New_York")
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
@@ -80,6 +81,11 @@ def cached_httpx_get(url: str, params: list[tuple[str, str | int]]) -> httpx.Res
 def today_for_market() -> dt.date:
     timezone = MARKET_TIMEZONE.get(MARKET, MARKET_TIMEZONE["u"])
     return dt.datetime.now(ZoneInfo(timezone)).date()
+
+
+def new_york_regular_session_in_progress(now: dt.datetime | None = None) -> bool:
+    now = (now or dt.datetime.now(NEW_YORK_TIMEZONE)).astimezone(NEW_YORK_TIMEZONE)
+    return dt.time(9, 30) <= now.time() < dt.time(16)
 
 
 TV_US_HEADERS = {
@@ -380,6 +386,9 @@ def fetch_trading_dollar_fmp(
     )
     data = res.json()
     rows = data.get("historical", []) if MARKET == "j" else data
+
+    if MARKET == "u" and new_york_regular_session_in_progress():
+        rows = [row for row in rows if row["date"] != today_for_market().isoformat()]
 
     if len(rows) < LAST_N:
         sys.stderr.write(
