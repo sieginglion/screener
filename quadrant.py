@@ -5,7 +5,7 @@ import math
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
@@ -266,22 +266,13 @@ def mean(values: Iterable[float | None]) -> float:
 class Candidate:
     symbol: str
     description: str
-
-
-@dataclass(frozen=True)
-class GrowthCandidate:
-    candidate: Candidate
-    growth_score: float
-
-
-@dataclass(frozen=True)
-class ValuationCandidate:
-    candidate: Candidate
-    growth_score: float
-    valuation_score: float
+    growth_score: float | None = None
+    valuation_score: float | None = None
 
     @property
-    def power(self) -> float:
+    def power(self) -> float | None:
+        if self.growth_score is None or self.valuation_score is None:
+            return None
         return self.growth_score * self.valuation_score
 
 
@@ -312,7 +303,7 @@ def fetch_score(
     return selector(values)
 
 
-def score_growth(candidate: Candidate) -> GrowthCandidate | None:
+def score_growth(candidate: Candidate) -> Candidate | None:
     try:
         score = fetch_score(
             "growth",
@@ -326,32 +317,29 @@ def score_growth(candidate: Candidate) -> GrowthCandidate | None:
         sys.stderr.write(f"Skipping {candidate.symbol} growth score: {exc}\n")
         return None
 
-    return GrowthCandidate(
-        candidate=candidate,
+    return replace(
+        candidate,
         growth_score=adjusted_growth_score(candidate.symbol, score),
     )
 
 
-def score_valuation(candidate: GrowthCandidate) -> ValuationCandidate | None:
+def score_valuation(candidate: Candidate) -> Candidate | None:
     try:
         score = fetch_score(
             "scores",
             {
-                "market": candidate_market(candidate.candidate.symbol),
-                "symbol": candidate.candidate.symbol,
+                "market": candidate_market(candidate.symbol),
+                "symbol": candidate.symbol,
                 "q": Q,
             },
             mean,
         )
     except Exception as exc:
-        sys.stderr.write(
-            f"Skipping {candidate.candidate.symbol} valuation score: {exc}\n"
-        )
+        sys.stderr.write(f"Skipping {candidate.symbol} valuation score: {exc}\n")
         return None
 
-    return ValuationCandidate(
-        candidate=candidate.candidate,
-        growth_score=candidate.growth_score,
+    return replace(
+        candidate,
         valuation_score=score,
     )
 
@@ -496,13 +484,10 @@ def load_top_candidates(
     return top_candidates(liquidity, top_n_results)
 
 
-def score_growth_candidates(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:
+def score_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
     attempted = list(candidates)
     if not GROWTH_ENABLED:
-        return [
-            GrowthCandidate(candidate=candidate, growth_score=1)
-            for candidate in attempted
-        ]
+        return [replace(candidate, growth_score=1) for candidate in attempted]
 
     with ThreadPoolExecutor(max_workers=GROWTH_CONCURRENCY) as executor:
         scored = [
@@ -514,8 +499,8 @@ def score_growth_candidates(candidates: Iterable[Candidate]) -> list[GrowthCandi
 
 
 def score_all_valuations(
-    candidates: Iterable[GrowthCandidate],
-) -> list[ValuationCandidate]:
+    candidates: Iterable[Candidate],
+) -> list[Candidate]:
     scored = [
         scored_candidate
         for scored_candidate in (score_valuation(candidate) for candidate in candidates)
@@ -538,13 +523,13 @@ def load_candidates() -> list[Candidate]:
     return candidates
 
 
-def write_results(results: Iterable[ValuationCandidate]) -> None:
+def write_results(results: Iterable[Candidate]) -> None:
     writer = csv.writer(sys.stdout, lineterminator="\n")
     for result in results:
         writer.writerow(
             [
-                result.candidate.symbol,
-                result.candidate.description,
+                result.symbol,
+                result.description,
             ]
         )
 
@@ -555,8 +540,12 @@ def main() -> int:
     growth_candidates = score_growth_candidates(load_candidates())
     scored_candidates = score_all_valuations(growth_candidates)
     ranked_candidates = sorted(
-        (candidate for candidate in scored_candidates if candidate.power > 0),
-        key=lambda candidate: candidate.power,
+        (
+            candidate
+            for candidate in scored_candidates
+            if candidate.power is not None and candidate.power > 0
+        ),
+        key=lambda candidate: candidate.power or 0,
         reverse=True,
     )
 

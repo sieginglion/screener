@@ -1,3 +1,4 @@
+import io
 import sys
 import tempfile
 import types
@@ -333,6 +334,24 @@ class CandidateLoadingTests(unittest.TestCase):
 
 
 class GrowthScoringTests(unittest.TestCase):
+    def test_scores_are_kept_on_the_same_candidate(self):
+        candidate = quadrant.Candidate(symbol="A", description="Alpha")
+
+        with patch("quadrant.fetch_score", side_effect=[2, 3]):
+            growth_candidate = quadrant.score_growth(candidate)
+            scored_candidate = quadrant.score_valuation(growth_candidate)
+
+        self.assertEqual(
+            scored_candidate,
+            quadrant.Candidate(
+                symbol="A",
+                description="Alpha",
+                growth_score=2,
+                valuation_score=3,
+            ),
+        )
+        self.assertEqual(scored_candidate.power, 6)
+
     def test_growth_scoring_can_be_disabled(self):
         candidates = [
             quadrant.Candidate(symbol="A", description="Alpha"),
@@ -349,10 +368,54 @@ class GrowthScoringTests(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                quadrant.GrowthCandidate(candidate=candidates[0], growth_score=1),
-                quadrant.GrowthCandidate(candidate=candidates[1], growth_score=1),
+                quadrant.Candidate(
+                    symbol="A", description="Alpha", growth_score=1
+                ),
+                quadrant.Candidate(
+                    symbol="B", description="Beta", growth_score=1
+                ),
             ],
         )
+
+
+class MainTests(unittest.TestCase):
+    def test_main_writes_only_positive_complete_candidates_by_descending_power(self):
+        source_candidates = [quadrant.Candidate(symbol="source", description="Source")]
+        scored_candidates = [
+            quadrant.Candidate(
+                symbol="A", description="Alpha", growth_score=2, valuation_score=3
+            ),
+            quadrant.Candidate(
+                symbol="B",
+                description="Beta, Inc.",
+                growth_score=3,
+                valuation_score=3,
+            ),
+            quadrant.Candidate(symbol="C", description="Incomplete", growth_score=2),
+            quadrant.Candidate(
+                symbol="D", description="Zero", growth_score=1, valuation_score=0
+            ),
+            quadrant.Candidate(
+                symbol="E", description="Negative", growth_score=-1, valuation_score=2
+            ),
+        ]
+
+        with (
+            patch("quadrant.load_dotenv"),
+            patch("quadrant.load_candidates", return_value=source_candidates),
+            patch(
+                "quadrant.score_growth_candidates", return_value=scored_candidates
+            ) as score_growth,
+            patch(
+                "quadrant.score_all_valuations", return_value=scored_candidates
+            ) as score_valuations,
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            self.assertEqual(quadrant.main(), 0)
+
+        score_growth.assert_called_once_with(source_candidates)
+        score_valuations.assert_called_once_with(scored_candidates)
+        self.assertEqual(stdout.getvalue(), 'B,"Beta, Inc."\nA,Alpha\n')
 
 
 class IntradayLiquidityTests(unittest.TestCase):
