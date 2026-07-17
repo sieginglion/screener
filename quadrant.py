@@ -406,49 +406,17 @@ def top_candidates(
     ]
 
 
-def load_top_candidates_by_liquidity(
-    top_n_symbols: int,
-    top_n_results: int,
-    tv_config: TradingViewConfig,
-    fetch_trading_dollars: Callable[
-        [list[tuple[str, str]]], Iterable[tuple[str, str, float]]
-    ],
-) -> list[str]:
-    validate_candidate_pool_sizes(top_n_symbols, top_n_results)
-
-    sys.stderr.write("Fetching symbols from TradingView...\n")
-    stocks = fetch_symbols_from_tv(
-        tv_config=tv_config,
-        top_n_symbols=top_n_symbols,
-    )
-    sys.stderr.write(f"Found {len(stocks)} symbols\n")
-
-    return top_candidates(fetch_trading_dollars(stocks), top_n_results)
-
-
-def load_top_candidates_fmp(
+def fetch_trading_dollars_fmp(
+    stocks: Iterable[tuple[str, str]],
     api_key: str | None,
-    top_n_symbols: int,
-    top_n_results: int,
-    tv_config: TradingViewConfig,
-) -> list[Candidate]:
+) -> list[tuple[str, str, float]]:
     from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
 
-    def fetch_trading_dollars(
-        stocks: list[tuple[str, str]],
-    ) -> list[tuple[str, str, float]]:
-        sys.stderr.write("Fetching trading dollar data from FMP...\n")
-        return [
-            fetch_trading_dollar_fmp(symbol, description, from_date, api_key)
-            for symbol, description in stocks
-        ]
-
-    return load_top_candidates_by_liquidity(
-        top_n_symbols,
-        top_n_results,
-        tv_config,
-        fetch_trading_dollars,
-    )
+    sys.stderr.write("Fetching trading dollar data from FMP...\n")
+    return [
+        fetch_trading_dollar_fmp(symbol, description, from_date, api_key)
+        for symbol, description in stocks
+    ]
 
 
 @cached(43200)
@@ -469,54 +437,51 @@ def fetch_trading_dollar_tw(
     return stock_id, description, float(total)
 
 
-def load_top_candidates_tw(
-    top_n_symbols: int, top_n_results: int, tv_config: TradingViewConfig
-) -> list[Candidate]:
+def fetch_trading_dollars_tw(
+    stocks: Iterable[tuple[str, str]],
+) -> list[tuple[str, str, float]]:
+    global finmind_api
+
     finmind_key = os.environ.get("FINMIND_KEY")
 
     today = today_for_market()
     start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     end = today.isoformat()
 
-    def fetch_trading_dollars(
-        stocks: list[tuple[str, str]],
-    ) -> list[tuple[str, str, float]]:
-        global finmind_api
+    from FinMind.data import DataLoader
 
-        from FinMind.data import DataLoader
+    finmind_api = DataLoader()
+    finmind_api.login_by_token(finmind_key)
 
-        finmind_api = DataLoader()
-        finmind_api.login_by_token(finmind_key)
-
-        sys.stderr.write("Fetching trading dollar data from FinMind...\n")
-        with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
-            return list(
-                pool.map(
-                    lambda s: fetch_trading_dollar_tw(s[0], s[1], start, end),
-                    stocks,
-                )
+    sys.stderr.write("Fetching trading dollar data from FinMind...\n")
+    with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
+        return list(
+            pool.map(
+                lambda s: fetch_trading_dollar_tw(s[0], s[1], start, end),
+                stocks,
             )
-
-    return load_top_candidates_by_liquidity(
-        top_n_symbols,
-        top_n_results,
-        tv_config,
-        fetch_trading_dollars,
-    )
+        )
 
 
 def load_top_candidates(
     api_key: str | None, top_n_symbols: int, top_n_results: int
 ) -> list[Candidate]:
+    validate_candidate_pool_sizes(top_n_symbols, top_n_results)
+
     tv_config = current_tv_config()
-    if MARKET == "t":
-        return load_top_candidates_tw(top_n_symbols, top_n_results, tv_config)
-    return load_top_candidates_fmp(
-        api_key,
-        top_n_symbols,
-        top_n_results,
-        tv_config,
+    sys.stderr.write("Fetching symbols from TradingView...\n")
+    stocks = fetch_symbols_from_tv(
+        tv_config=tv_config,
+        top_n_symbols=top_n_symbols,
     )
+    sys.stderr.write(f"Found {len(stocks)} symbols\n")
+
+    if MARKET == "t":
+        liquidity = fetch_trading_dollars_tw(stocks)
+    else:
+        liquidity = fetch_trading_dollars_fmp(stocks, api_key)
+
+    return top_candidates(liquidity, top_n_results)
 
 
 def score_growth_candidates(candidates: Iterable[Candidate]) -> list[GrowthCandidate]:

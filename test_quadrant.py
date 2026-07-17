@@ -1,7 +1,7 @@
 import sys
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import quadrant
 
@@ -15,57 +15,43 @@ class LoadTopCandidatesTests(unittest.TestCase):
     )
     stocks = [("A", "Alpha; Inc."), ("B", "Beta")]
 
-    def test_shared_loader_fetches_symbols_and_ranks_by_liquidity(self):
-        fetch_trading_dollars = Mock(
-            return_value=[
-                ("A", "Alpha; Inc.", 5),
-                ("B", "Beta", 8),
-            ]
-        )
+    def test_loader_rejects_a_pool_that_cannot_be_reranked(self):
+        with (
+            patch("quadrant.current_tv_config") as config,
+            patch("quadrant.fetch_symbols_from_tv") as symbols,
+        ):
+            with self.assertRaisesRegex(ValueError, "top_n_symbols must be greater"):
+                quadrant.load_top_candidates(
+                    api_key="test-key",
+                    top_n_symbols=2,
+                    top_n_results=2,
+                )
 
-        with patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks) as fetch:
-            result = quadrant.load_top_candidates_by_liquidity(
-                top_n_symbols=3,
-                top_n_results=2,
-                tv_config=self.tv_config,
-                fetch_trading_dollars=fetch_trading_dollars,
-            )
+        config.assert_not_called()
+        symbols.assert_not_called()
 
-        self.assertEqual(
-            result,
-            [
-                quadrant.Candidate(symbol="B", description="Beta"),
-                quadrant.Candidate(symbol="A", description="Alpha; Inc."),
-            ],
-        )
-        fetch.assert_called_once_with(tv_config=self.tv_config, top_n_symbols=3)
-        fetch_trading_dollars.assert_called_once_with(self.stocks)
-
-    def test_shared_loader_rejects_a_pool_that_cannot_be_reranked(self):
-        with self.assertRaisesRegex(ValueError, "top_n_symbols must be greater"):
-            quadrant.load_top_candidates_by_liquidity(
-                top_n_symbols=2,
-                top_n_results=2,
-                tv_config=self.tv_config,
-                fetch_trading_dollars=Mock(),
-            )
-
-    def test_fmp_loader_uses_shared_ranking_flow(self):
+    def test_fmp_loader_fetches_symbols_and_ranks_by_liquidity(self):
         def trading_dollars(symbol, description, from_date, api_key):
             return symbol, description, {"A": 1, "B": 2}[symbol]
 
         with (
-            patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks),
+            patch("quadrant.current_tv_config", return_value=self.tv_config),
+            patch(
+                "quadrant.today_for_market",
+                return_value=quadrant.dt.date(2026, 7, 17),
+            ),
+            patch(
+                "quadrant.fetch_symbols_from_tv", return_value=self.stocks
+            ) as symbols,
             patch(
                 "quadrant.fetch_trading_dollar_fmp",
                 side_effect=trading_dollars,
             ) as fetch,
         ):
-            result = quadrant.load_top_candidates_fmp(
+            result = quadrant.load_top_candidates(
                 api_key="test-key",
                 top_n_symbols=3,
                 top_n_results=2,
-                tv_config=self.tv_config,
             )
 
         self.assertEqual(
@@ -75,11 +61,16 @@ class LoadTopCandidatesTests(unittest.TestCase):
                 quadrant.Candidate(symbol="A", description="Alpha; Inc."),
             ],
         )
-        self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(fetch.call_args_list[0].args[:2], ("A", "Alpha; Inc."))
-        self.assertEqual(fetch.call_args_list[1].args[:2], ("B", "Beta"))
+        symbols.assert_called_once_with(tv_config=self.tv_config, top_n_symbols=3)
+        self.assertEqual(
+            fetch.call_args_list,
+            [
+                call("A", "Alpha; Inc.", "2026-05-22", "test-key"),
+                call("B", "Beta", "2026-05-22", "test-key"),
+            ],
+        )
 
-    def test_taiwan_loader_logs_in_and_uses_shared_ranking_flow(self):
+    def test_taiwan_loader_logs_in_and_ranks_by_liquidity(self):
         finmind = types.ModuleType("FinMind")
         finmind_data = types.ModuleType("FinMind.data")
         loader = Mock()
@@ -97,16 +88,25 @@ class LoadTopCandidatesTests(unittest.TestCase):
             ),
             patch.dict(quadrant.os.environ, {"FINMIND_KEY": "test-key"}),
             patch.object(quadrant, "finmind_api", None),
-            patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks),
+            patch.object(quadrant, "MARKET", "t"),
+            patch("quadrant.current_tv_config", return_value=self.tv_config),
+            patch(
+                "quadrant.today_for_market",
+                return_value=quadrant.dt.date(2026, 7, 17),
+            ),
+            patch(
+                "quadrant.fetch_symbols_from_tv", return_value=self.stocks
+            ) as symbols,
+            patch("quadrant.fetch_trading_dollars_fmp") as fmp,
             patch(
                 "quadrant.fetch_trading_dollar_tw",
                 side_effect=trading_dollars,
             ) as fetch,
         ):
-            result = quadrant.load_top_candidates_tw(
+            result = quadrant.load_top_candidates(
+                api_key=None,
                 top_n_symbols=3,
                 top_n_results=2,
-                tv_config=self.tv_config,
             )
 
         self.assertEqual(
@@ -118,7 +118,15 @@ class LoadTopCandidatesTests(unittest.TestCase):
         )
         data_loader.assert_called_once_with()
         loader.login_by_token.assert_called_once_with("test-key")
-        self.assertEqual(fetch.call_count, 2)
+        symbols.assert_called_once_with(tv_config=self.tv_config, top_n_symbols=3)
+        fmp.assert_not_called()
+        self.assertEqual(
+            fetch.call_args_list,
+            [
+                call("A", "Alpha; Inc.", "2026-05-22", "2026-07-17"),
+                call("B", "Beta", "2026-05-22", "2026-07-17"),
+            ],
+        )
 
 
 class GrowthScoringTests(unittest.TestCase):
