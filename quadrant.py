@@ -37,12 +37,6 @@ TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-s
 cache = Cache(Path().resolve() / ".cache")
 finmind_api = None
 
-MARKET_TIMEZONE = {
-    "u": "America/New_York",
-    "t": "Asia/Taipei",
-    "j": "Asia/Tokyo",
-}
-
 
 def candidate_pool_size(result_limit: int, multiplier: float) -> int:
     return math.ceil(result_limit * multiplier)
@@ -76,11 +70,6 @@ def cached_httpx_get(url: str, params: list[tuple[str, str | int]]) -> httpx.Res
     res = httpx.get(url, params=dict(params), timeout=None)
     res.raise_for_status()
     return res
-
-
-def today_for_market() -> dt.date:
-    timezone = MARKET_TIMEZONE.get(MARKET, MARKET_TIMEZONE["u"])
-    return dt.datetime.now(ZoneInfo(timezone)).date()
 
 
 def new_york_regular_session_in_progress(now: dt.datetime | None = None) -> bool:
@@ -128,18 +117,61 @@ TV_JP_HEADERS = {
 
 
 @dataclass(frozen=True)
-class TradingViewConfig:
-    url: str
-    headers: dict[str, str]
-    market_name: str
+class MarketConfig:
+    code: str
+    timezone: str
+    tradingview_url: str
+    tradingview_headers: dict[str, str]
+    tradingview_market: str
     language: str
+    liquidity_source: str
+    fmp_legacy: bool = False
+    fmp_symbol_suffix: str = ""
+    exclude_intraday_fmp_row: bool = False
+    include_bitcoin: bool = False
 
 
-TV_CONFIG_BY_MARKET = {
-    "u": TradingViewConfig(TV_US_URL, TV_US_HEADERS, "america", "en"),
-    "t": TradingViewConfig(TV_TW_URL, TV_TW_HEADERS, "taiwan", "zh_TW"),
-    "j": TradingViewConfig(TV_JP_URL, TV_JP_HEADERS, "japan", "ja"),
+MARKET_CONFIG_BY_CODE = {
+    "u": MarketConfig(
+        code="u",
+        timezone="America/New_York",
+        tradingview_url=TV_US_URL,
+        tradingview_headers=TV_US_HEADERS,
+        tradingview_market="america",
+        language="en",
+        liquidity_source="fmp",
+        exclude_intraday_fmp_row=True,
+        include_bitcoin=True,
+    ),
+    "t": MarketConfig(
+        code="t",
+        timezone="Asia/Taipei",
+        tradingview_url=TV_TW_URL,
+        tradingview_headers=TV_TW_HEADERS,
+        tradingview_market="taiwan",
+        language="zh_TW",
+        liquidity_source="finmind",
+    ),
+    "j": MarketConfig(
+        code="j",
+        timezone="Asia/Tokyo",
+        tradingview_url=TV_JP_URL,
+        tradingview_headers=TV_JP_HEADERS,
+        tradingview_market="japan",
+        language="ja",
+        liquidity_source="fmp",
+        fmp_legacy=True,
+        fmp_symbol_suffix=".T",
+    ),
 }
+
+
+def current_market_config() -> MarketConfig:
+    return MARKET_CONFIG_BY_CODE.get(MARKET, MARKET_CONFIG_BY_CODE["u"])
+
+
+def today_for_market() -> dt.date:
+    return dt.datetime.now(ZoneInfo(current_market_config().timezone)).date()
 
 
 def type_filter(stock_type: str, *typespecs: str) -> dict:
@@ -166,15 +198,15 @@ def type_filter(stock_type: str, *typespecs: str) -> dict:
     return {"operation": {"operator": "and", "operands": operands}}
 
 
-def tradingview_payload(market_name: str, language: str, limit: int) -> dict:
+def tradingview_payload(market: MarketConfig, limit: int) -> dict:
     return {
         "columns": ["ticker-view"],
         "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
         "ignore_unknown_fields": False,
-        "options": {"lang": language},
+        "options": {"lang": market.language},
         "range": [0, limit],
         "sort": {"sortBy": f"Value.Traded|{TV_SORT_WINDOW}", "sortOrder": "desc"},
-        "markets": [market_name],
+        "markets": [market.tradingview_market],
         "filter2": {
             "operator": "and",
             "operands": [
@@ -256,7 +288,7 @@ class ValuationCandidate:
 def candidate_market(symbol: str) -> str:
     if symbol == "BTC":
         return "c"
-    return MARKET
+    return current_market_config().code
 
 
 def adjusted_growth_score(symbol: str, score: float) -> float:
@@ -278,10 +310,6 @@ def fetch_score(
     response.raise_for_status()
     values = response.json()
     return selector(values)
-
-
-def current_tv_config() -> TradingViewConfig:
-    return TV_CONFIG_BY_MARKET.get(MARKET, TV_CONFIG_BY_MARKET["u"])
 
 
 def score_growth(candidate: Candidate) -> GrowthCandidate | None:
@@ -329,16 +357,16 @@ def score_valuation(candidate: GrowthCandidate) -> ValuationCandidate | None:
 
 
 def fetch_symbols_from_tv(
-    tv_config: TradingViewConfig,
+    market: MarketConfig,
     top_n_symbols: int,
 ) -> list[tuple[str, str]]:
-    payload = tradingview_payload(
-        tv_config.market_name,
-        tv_config.language,
-        top_n_symbols,
-    )
+    payload = tradingview_payload(market, top_n_symbols)
     with httpx.Client() as client:
-        response = client.post(tv_config.url, headers=tv_config.headers, json=payload)
+        response = client.post(
+            market.tradingview_url,
+            headers=market.tradingview_headers,
+            json=payload,
+        )
         response.raise_for_status()
         data = response.json()
 
@@ -354,19 +382,20 @@ def fetch_symbols_from_tv(
 def fetch_trading_dollar_fmp(
     symbol: str, description: str, from_date: str, api_key: str
 ) -> tuple[str, str, float]:
-    fmp_symbol = f"{symbol}.T" if MARKET == "j" else symbol
+    market = current_market_config()
+    fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     res = cached_httpx_get(
-        f"{FMP_LEGACY_URL}/{fmp_symbol}" if MARKET == "j" else FMP_STABLE_URL,
+        f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
         params=[
             ("apikey", api_key),
             ("from", from_date),
-            *([] if MARKET == "j" else [("symbol", fmp_symbol)]),
+            *([] if market.fmp_legacy else [("symbol", fmp_symbol)]),
         ],
     )
     data = res.json()
-    rows = data.get("historical", []) if MARKET == "j" else data
+    rows = data.get("historical", []) if market.fmp_legacy else data
 
-    if MARKET == "u" and new_york_regular_session_in_progress():
+    if market.exclude_intraday_fmp_row and new_york_regular_session_in_progress():
         rows = [row for row in rows if row["date"] != today_for_market().isoformat()]
 
     if len(rows) < LAST_N:
@@ -452,15 +481,15 @@ def load_top_candidates(
 ) -> list[Candidate]:
     validate_candidate_pool_sizes(top_n_symbols, top_n_results)
 
-    tv_config = current_tv_config()
+    market = current_market_config()
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
-        tv_config=tv_config,
+        market=market,
         top_n_symbols=top_n_symbols,
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
-    if MARKET == "t":
+    if market.liquidity_source == "finmind":
         liquidity = fetch_trading_dollars_tw(stocks)
     else:
         liquidity = fetch_trading_dollars_fmp(stocks, api_key)
@@ -504,7 +533,7 @@ def load_candidates() -> list[Candidate]:
         top_n_results=RESULT_LIMIT,
     )
 
-    if MARKET == "u":
+    if current_market_config().include_bitcoin:
         candidates.append(Candidate(symbol="BTC", description="Bitcoin"))
 
     return candidates
