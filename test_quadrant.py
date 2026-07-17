@@ -1,9 +1,85 @@
 import sys
 import types
 import unittest
-from unittest.mock import Mock, call, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import quadrant
+
+
+class TradingViewHeaderTests(unittest.TestCase):
+    common_headers = {
+        "accept": "application/json",
+        "accept-language": "en-US,en;q=0.9",
+        "cache-control": "no-cache",
+        "content-type": "text/plain;charset=UTF-8",
+        "pragma": "no-cache",
+        "priority": "u=1, i",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+    }
+    market_specific_headers = {
+        "u": {
+            "origin": "https://www.tradingview.com",
+            "referer": "https://www.tradingview.com/",
+            "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        },
+        "t": {
+            "origin": "https://tw.tradingview.com",
+            "referer": "https://tw.tradingview.com/",
+            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+        },
+        "j": {
+            "origin": "https://jp.tradingview.com",
+            "referer": "https://jp.tradingview.com/",
+            "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        },
+    }
+
+    def test_effective_headers_match_the_market_contract(self):
+        for market, market_headers in self.market_specific_headers.items():
+            with self.subTest(market=market):
+                self.assertEqual(
+                    quadrant.TV_CONFIG_BY_MARKET[market].headers,
+                    self.common_headers | market_headers,
+                )
+
+    def test_symbol_fetch_forwards_each_market_header_set(self):
+        response = Mock()
+        response.json.return_value = {
+            "data": [{"d": [{"name": "BRK.B", "description": "Berkshire"}]}]
+        }
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.post.return_value = response
+
+        with patch("quadrant.httpx.Client", return_value=client):
+            for config in quadrant.TV_CONFIG_BY_MARKET.values():
+                self.assertEqual(
+                    quadrant.fetch_symbols_from_tv(config, top_n_symbols=1),
+                    [("BRK-B", "Berkshire")],
+                )
+
+        self.assertEqual(len(client.post.call_args_list), 3)
+        for config, request in zip(
+            quadrant.TV_CONFIG_BY_MARKET.values(), client.post.call_args_list
+        ):
+            with self.subTest(market=config.market_name):
+                self.assertEqual(request.args[0], config.url)
+                self.assertEqual(request.kwargs["headers"], config.headers)
+                self.assertEqual(
+                    request.kwargs["json"],
+                    quadrant.tradingview_payload(
+                        config.market_name,
+                        config.language,
+                        limit=1,
+                    ),
+                )
 
 
 class LoadTopCandidatesTests(unittest.TestCase):

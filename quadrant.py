@@ -88,57 +88,41 @@ def new_york_regular_session_in_progress(now: dt.datetime | None = None) -> bool
     return dt.time(9, 30) <= now.time() < dt.time(16)
 
 
-TV_US_HEADERS = {
+TV_COMMON_HEADERS = {
     "accept": "application/json",
     "accept-language": "en-US,en;q=0.9",
     "cache-control": "no-cache",
     "content-type": "text/plain;charset=UTF-8",
-    "origin": "https://www.tradingview.com",
     "pragma": "no-cache",
     "priority": "u=1, i",
-    "referer": "https://www.tradingview.com/",
-    "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"macOS"',
     "sec-fetch-dest": "empty",
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-site",
+}
+
+TV_US_HEADERS = {
+    **TV_COMMON_HEADERS,
+    "origin": "https://www.tradingview.com",
+    "referer": "https://www.tradingview.com/",
+    "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
 }
 
 TV_TW_HEADERS = {
-    "accept": "application/json",
-    "accept-language": "en-US,en;q=0.9",
-    "cache-control": "no-cache",
-    "content-type": "text/plain;charset=UTF-8",
+    **TV_COMMON_HEADERS,
     "origin": "https://tw.tradingview.com",
-    "pragma": "no-cache",
-    "priority": "u=1, i",
     "referer": "https://tw.tradingview.com/",
     "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-site",
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
 }
 
 TV_JP_HEADERS = {
-    "accept": "application/json",
-    "accept-language": "en-US,en;q=0.9",
-    "cache-control": "no-cache",
-    "content-type": "text/plain;charset=UTF-8",
+    **TV_COMMON_HEADERS,
     "origin": "https://jp.tradingview.com",
-    "pragma": "no-cache",
-    "priority": "u=1, i",
     "referer": "https://jp.tradingview.com/",
     "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-site",
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
 }
 
