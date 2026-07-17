@@ -10,6 +10,26 @@ import clear_ticker_cache
 import quadrant
 
 
+class FakeTaiwanDailyData:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __getitem__(self, columns):
+        if columns != ["date", "Trading_money"]:
+            raise KeyError(columns)
+        return self
+
+    def itertuples(self, index=False):
+        if index:
+            raise ValueError("index must be disabled")
+        return iter(
+            [
+                types.SimpleNamespace(date=date, Trading_money=trading_money)
+                for date, trading_money in self.rows
+            ]
+        )
+
+
 class CachedGetJsonTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -206,6 +226,24 @@ class LoadTopCandidatesTests(unittest.TestCase):
         config.assert_not_called()
         symbols.assert_not_called()
 
+    def test_top_candidates_excludes_insufficient_liquidity_data(self):
+        result = quadrant.top_candidates(
+            [
+                ("A", "Alpha", None),
+                ("B", "Beta", 2),
+                ("C", "Charlie", 1),
+            ],
+            limit=3,
+        )
+
+        self.assertEqual(
+            result,
+            [
+                quadrant.Candidate(symbol="B", description="Beta"),
+                quadrant.Candidate(symbol="C", description="Charlie"),
+            ],
+        )
+
     def test_fmp_loader_fetches_symbols_and_ranks_by_liquidity(self):
         def trading_dollars(market, symbol, description, from_date, api_key):
             return symbol, description, {"A": 1, "B": 2}[symbol]
@@ -246,6 +284,27 @@ class LoadTopCandidatesTests(unittest.TestCase):
                 call(self.market, "B", "Beta", "2026-05-22", "test-key"),
             ],
         )
+
+    def test_loader_omits_candidates_without_enough_liquidity_data(self):
+        def trading_dollars(market, symbol, description, from_date, api_key):
+            return symbol, description, {"A": None, "B": 2}[symbol]
+
+        with (
+            patch("quadrant.current_market_config", return_value=self.market),
+            patch("quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)),
+            patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks),
+            patch(
+                "quadrant.fetch_trading_dollar_fmp",
+                side_effect=trading_dollars,
+            ),
+        ):
+            result = quadrant.load_top_candidates(
+                api_key="test-key",
+                top_n_symbols=3,
+                top_n_results=2,
+            )
+
+        self.assertEqual(result, [quadrant.Candidate(symbol="B", description="Beta")])
 
     def test_taiwan_loader_logs_in_and_ranks_by_liquidity(self):
         market = quadrant.MARKET_CONFIG_BY_CODE["t"]
@@ -485,6 +544,102 @@ class MainTests(unittest.TestCase):
 
 
 class IntradayLiquidityTests(unittest.TestCase):
+    def test_recent_trading_dollars_uses_only_the_latest_complete_sessions(self):
+        with patch.object(quadrant, "LAST_N", 2):
+            total = quadrant.recent_trading_dollars(
+                [
+                    ("2026-07-15", 4),
+                    ("2026-07-17", 10),
+                    ("2026-07-16", 5),
+                ],
+                "ABC",
+            )
+
+        self.assertEqual(total, 15)
+
+    def test_recent_trading_dollars_requires_all_sessions(self):
+        with (
+            patch.object(quadrant, "LAST_N", 2),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            total = quadrant.recent_trading_dollars([("2026-07-17", 10)], "ABC")
+
+        self.assertIsNone(total)
+        self.assertEqual(
+            stderr.getvalue(),
+            "Skipping ABC trading dollar data: only 1 rows, need 2\n",
+        )
+
+    def test_fmp_and_finmind_produce_the_same_total_for_equal_notionals(self):
+        fmp_data = [
+            {"date": "2026-07-15", "vwap": 2, "volume": 2},
+            {"date": "2026-07-17", "vwap": 10, "volume": 1},
+            {"date": "2026-07-16", "vwap": 5, "volume": 1},
+        ]
+        finmind_data = FakeTaiwanDailyData(
+            [
+                ("2026-07-15", 4),
+                ("2026-07-17", 10),
+                ("2026-07-16", 5),
+            ]
+        )
+
+        with (
+            patch.object(quadrant, "LAST_N", 2),
+            patch("quadrant.new_york_regular_session_in_progress", return_value=False),
+            patch("quadrant.cached_get_json", return_value=fmp_data),
+            patch("quadrant.fetch_taiwan_stock_daily", return_value=finmind_data),
+        ):
+            fmp_result = quadrant.fetch_trading_dollar_fmp(
+                quadrant.MARKET_CONFIG_BY_CODE["u"],
+                "ABC",
+                "Example Corp.",
+                "2026-05-22",
+                "test-key",
+            )
+            finmind_result = quadrant.fetch_trading_dollar_tw(
+                "1234",
+                "Example Corp.",
+                "2026-05-22",
+                "2026-07-17",
+            )
+
+        self.assertEqual(fmp_result[2], 15)
+        self.assertEqual(finmind_result[2], 15)
+
+    def test_fmp_and_finmind_exclude_insufficient_rows(self):
+        fmp_data = [{"date": "2026-07-17", "vwap": 10, "volume": 1}]
+        finmind_data = FakeTaiwanDailyData([("2026-07-17", 10)])
+
+        with (
+            patch.object(quadrant, "LAST_N", 2),
+            patch("quadrant.new_york_regular_session_in_progress", return_value=False),
+            patch("quadrant.cached_get_json", return_value=fmp_data),
+            patch("quadrant.fetch_taiwan_stock_daily", return_value=finmind_data),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            fmp_result = quadrant.fetch_trading_dollar_fmp(
+                quadrant.MARKET_CONFIG_BY_CODE["u"],
+                "ABC",
+                "Example Corp.",
+                "2026-05-22",
+                "test-key",
+            )
+            finmind_result = quadrant.fetch_trading_dollar_tw(
+                "1234",
+                "Example Corp.",
+                "2026-05-22",
+                "2026-07-17",
+            )
+
+        self.assertEqual(fmp_result, ("ABC", "Example Corp.", None))
+        self.assertEqual(finmind_result, ("1234", "Example Corp.", None))
+        self.assertEqual(
+            stderr.getvalue(),
+            "Skipping ABC trading dollar data: only 1 rows, need 2\n"
+            "Skipping 1234 trading dollar data: only 1 rows, need 2\n",
+        )
+
     def test_new_york_regular_session_boundaries(self):
         timezone = quadrant.NEW_YORK_TIMEZONE
 

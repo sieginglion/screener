@@ -376,13 +376,26 @@ def fetch_symbols_from_tv(
         ]
 
 
+def recent_trading_dollars(
+    rows: Iterable[tuple[str, float]],
+    symbol: str,
+) -> float | None:
+    recent_rows = sorted(rows, key=lambda row: row[0], reverse=True)[:LAST_N]
+    if len(recent_rows) < LAST_N:
+        sys.stderr.write(
+            f"Skipping {symbol} trading dollar data: only {len(recent_rows)} rows, need {LAST_N}\n"
+        )
+        return None
+    return sum(notional for _, notional in recent_rows)
+
+
 def fetch_trading_dollar_fmp(
     market: MarketConfig,
     symbol: str,
     description: str,
     from_date: str,
     api_key: str | None,
-) -> tuple[str, str, float]:
+) -> tuple[str, str, float | None]:
     fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     data = cached_get_json(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
@@ -398,21 +411,19 @@ def fetch_trading_dollar_fmp(
         today = today_for_market(market).isoformat()
         rows = [row for row in rows if row["date"] != today]
 
-    if len(rows) < LAST_N:
-        sys.stderr.write(
-            f"Skipping {symbol} trading dollar data: only {len(rows)} FMP rows, need {LAST_N}\n"
-        )
-        return symbol, description, 0
-
-    rows = sorted(rows, key=lambda x: x["date"], reverse=True)[:LAST_N]
-    return symbol, description, sum(row["vwap"] * row["volume"] for row in rows)
+    daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in rows]
+    return symbol, description, recent_trading_dollars(daily_notionals, symbol)
 
 
 def top_candidates(
-    results: Iterable[tuple[str, str, float]],
+    results: Iterable[tuple[str, str, float | None]],
     limit: int,
 ) -> list[Candidate]:
-    top = sorted(results, key=lambda x: x[2], reverse=True)[:limit]
+    top = sorted(
+        (result for result in results if result[2] is not None),
+        key=lambda result: result[2],
+        reverse=True,
+    )[:limit]
     return [
         Candidate(symbol=symbol, description=description)
         for symbol, description, _ in top
@@ -423,7 +434,7 @@ def fetch_trading_dollars_fmp(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
     api_key: str | None,
-) -> list[tuple[str, str, float]]:
+) -> list[tuple[str, str, float | None]]:
     from_date = (
         today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS)
     ).isoformat()
@@ -447,16 +458,19 @@ def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str):
 
 def fetch_trading_dollar_tw(
     stock_id: str, description: str, start: str, end: str
-) -> tuple[str, str, float]:
+) -> tuple[str, str, float | None]:
     df = fetch_taiwan_stock_daily(stock_id, start, end)
-    total = df.sort_values("date", ascending=False).head(LAST_N)["Trading_money"].sum()
-    return stock_id, description, float(total)
+    daily_notionals = [
+        (str(row.date), float(row.Trading_money))
+        for row in df[["date", "Trading_money"]].itertuples(index=False)
+    ]
+    return stock_id, description, recent_trading_dollars(daily_notionals, stock_id)
 
 
 def fetch_trading_dollars_tw(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
-) -> list[tuple[str, str, float]]:
+) -> list[tuple[str, str, float | None]]:
     global finmind_api
 
     finmind_key = os.environ.get("FINMIND_KEY")
