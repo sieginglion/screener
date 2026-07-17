@@ -79,16 +79,17 @@ class MarketConfigurationTests(unittest.TestCase):
     def test_today_for_market_uses_the_configured_timezone(self):
         expected_today = quadrant.dt.date(2026, 7, 17)
 
-        for code, market in quadrant.MARKET_CONFIG_BY_CODE.items():
+        for market in quadrant.MARKET_CONFIG_BY_CODE.values():
             with (
-                self.subTest(market=code),
-                patch.object(quadrant, "MARKET", code),
+                self.subTest(market=market.code),
+                patch.object(quadrant, "current_market_config") as current_config,
                 patch.object(quadrant.dt, "datetime") as datetime,
             ):
                 datetime.now.return_value.date.return_value = expected_today
 
-                self.assertEqual(quadrant.today_for_market(), expected_today)
+                self.assertEqual(quadrant.today_for_market(market), expected_today)
                 datetime.now.assert_called_once_with(ZoneInfo(market.timezone))
+                current_config.assert_not_called()
 
     def test_candidate_market_uses_the_market_config_except_for_bitcoin(self):
         for code, market in quadrant.MARKET_CONFIG_BY_CODE.items():
@@ -206,7 +207,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
         symbols.assert_not_called()
 
     def test_fmp_loader_fetches_symbols_and_ranks_by_liquidity(self):
-        def trading_dollars(symbol, description, from_date, api_key):
+        def trading_dollars(market, symbol, description, from_date, api_key):
             return symbol, description, {"A": 1, "B": 2}[symbol]
 
         with (
@@ -214,7 +215,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
             patch(
                 "quadrant.today_for_market",
                 return_value=quadrant.dt.date(2026, 7, 17),
-            ),
+            ) as today,
             patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
@@ -237,15 +238,17 @@ class LoadTopCandidatesTests(unittest.TestCase):
             ],
         )
         symbols.assert_called_once_with(market=self.market, top_n_symbols=3)
+        today.assert_called_once_with(self.market)
         self.assertEqual(
             fetch.call_args_list,
             [
-                call("A", "Alpha; Inc.", "2026-05-22", "test-key"),
-                call("B", "Beta", "2026-05-22", "test-key"),
+                call(self.market, "A", "Alpha; Inc.", "2026-05-22", "test-key"),
+                call(self.market, "B", "Beta", "2026-05-22", "test-key"),
             ],
         )
 
     def test_taiwan_loader_logs_in_and_ranks_by_liquidity(self):
+        market = quadrant.MARKET_CONFIG_BY_CODE["t"]
         finmind = types.ModuleType("FinMind")
         finmind_data = types.ModuleType("FinMind.data")
         loader = Mock()
@@ -265,12 +268,12 @@ class LoadTopCandidatesTests(unittest.TestCase):
             patch.object(quadrant, "finmind_api", None),
             patch(
                 "quadrant.current_market_config",
-                return_value=quadrant.MARKET_CONFIG_BY_CODE["t"],
+                return_value=market,
             ),
             patch(
                 "quadrant.today_for_market",
                 return_value=quadrant.dt.date(2026, 7, 17),
-            ),
+            ) as today,
             patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
@@ -296,10 +299,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
         data_loader.assert_called_once_with()
         loader.login_by_token.assert_called_once_with("test-key")
         symbols.assert_called_once_with(
-            market=quadrant.MARKET_CONFIG_BY_CODE["t"],
+            market=market,
             top_n_symbols=3,
         )
         fmp.assert_not_called()
+        today.assert_called_once_with(market)
         self.assertEqual(
             fetch.call_args_list,
             [
@@ -442,18 +446,22 @@ class IntradayLiquidityTests(unittest.TestCase):
         ]
 
         with (
-            patch.object(quadrant, "MARKET", "u"),
             patch.object(quadrant, "LAST_N", 2),
             patch("quadrant.new_york_regular_session_in_progress", return_value=True),
             patch(
                 "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
-            ),
+            ) as today,
             patch("quadrant.cached_get_json", return_value=data) as fetch,
         ):
             result = quadrant.fetch_trading_dollar_fmp(
-                "ABC", "Example Corp.", "2026-05-22", "test-key"
+                quadrant.MARKET_CONFIG_BY_CODE["u"],
+                "ABC",
+                "Example Corp.",
+                "2026-05-22",
+                "test-key",
             )
 
+        today.assert_called_once_with(quadrant.MARKET_CONFIG_BY_CODE["u"])
         fetch.assert_called_once_with(
             quadrant.FMP_STABLE_URL,
             params=[
@@ -473,7 +481,6 @@ class IntradayLiquidityTests(unittest.TestCase):
         }
 
         with (
-            patch.object(quadrant, "MARKET", "j"),
             patch.object(quadrant, "LAST_N", 2),
             patch(
                 "quadrant.new_york_regular_session_in_progress", return_value=True
@@ -481,7 +488,11 @@ class IntradayLiquidityTests(unittest.TestCase):
             patch("quadrant.cached_get_json", return_value=data) as fetch,
         ):
             result = quadrant.fetch_trading_dollar_fmp(
-                "7203", "Toyota", "2026-05-22", "test-key"
+                quadrant.MARKET_CONFIG_BY_CODE["j"],
+                "7203",
+                "Toyota",
+                "2026-05-22",
+                "test-key",
             )
 
         in_session.assert_not_called()

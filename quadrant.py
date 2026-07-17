@@ -170,8 +170,8 @@ def current_market_config() -> MarketConfig:
     return MARKET_CONFIG_BY_CODE.get(MARKET, MARKET_CONFIG_BY_CODE["u"])
 
 
-def today_for_market() -> dt.date:
-    return dt.datetime.now(ZoneInfo(current_market_config().timezone)).date()
+def today_for_market(market: MarketConfig) -> dt.date:
+    return dt.datetime.now(ZoneInfo(market.timezone)).date()
 
 
 def type_filter(stock_type: str, *typespecs: str) -> dict:
@@ -368,9 +368,12 @@ def fetch_symbols_from_tv(
 
 
 def fetch_trading_dollar_fmp(
-    symbol: str, description: str, from_date: str, api_key: str
+    market: MarketConfig,
+    symbol: str,
+    description: str,
+    from_date: str,
+    api_key: str | None,
 ) -> tuple[str, str, float]:
-    market = current_market_config()
     fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     data = cached_get_json(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
@@ -383,7 +386,8 @@ def fetch_trading_dollar_fmp(
     rows = data.get("historical", []) if market.fmp_legacy else data
 
     if market.exclude_intraday_fmp_row and new_york_regular_session_in_progress():
-        rows = [row for row in rows if row["date"] != today_for_market().isoformat()]
+        today = today_for_market(market).isoformat()
+        rows = [row for row in rows if row["date"] != today]
 
     if len(rows) < LAST_N:
         sys.stderr.write(
@@ -407,14 +411,17 @@ def top_candidates(
 
 
 def fetch_trading_dollars_fmp(
+    market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
     api_key: str | None,
 ) -> list[tuple[str, str, float]]:
-    from_date = (today_for_market() - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
+    from_date = (
+        today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS)
+    ).isoformat()
 
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
     return [
-        fetch_trading_dollar_fmp(symbol, description, from_date, api_key)
+        fetch_trading_dollar_fmp(market, symbol, description, from_date, api_key)
         for symbol, description in stocks
     ]
 
@@ -438,13 +445,14 @@ def fetch_trading_dollar_tw(
 
 
 def fetch_trading_dollars_tw(
+    market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
 ) -> list[tuple[str, str, float]]:
     global finmind_api
 
     finmind_key = os.environ.get("FINMIND_KEY")
 
-    today = today_for_market()
+    today = today_for_market(market)
     start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
     end = today.isoformat()
 
@@ -477,9 +485,9 @@ def load_top_candidates(
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
     if market.liquidity_source == "finmind":
-        liquidity = fetch_trading_dollars_tw(stocks)
+        liquidity = fetch_trading_dollars_tw(market, stocks)
     else:
-        liquidity = fetch_trading_dollars_fmp(stocks, api_key)
+        liquidity = fetch_trading_dollars_fmp(market, stocks, api_key)
 
     return top_candidates(liquidity, top_n_results)
 
