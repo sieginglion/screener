@@ -255,9 +255,9 @@ class LoadTopCandidatesTests(unittest.TestCase):
     def test_top_candidates_excludes_insufficient_liquidity_data(self):
         result = quadrant.top_candidates(
             [
-                ("A", "Alpha", None),
-                ("B", "Beta", 2),
-                ("C", "Charlie", 1),
+                quadrant.LiquidityResult("A", "Alpha", None),
+                quadrant.LiquidityResult("B", "Beta", 2),
+                quadrant.LiquidityResult("C", "Charlie", 1),
             ],
             limit=3,
             market="u",
@@ -273,7 +273,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
 
     def test_fmp_loader_fetches_symbols_and_ranks_by_liquidity(self):
         def trading_dollars(market, symbol, description, from_date, api_key):
-            return symbol, description, {"A": 1, "B": 2}[symbol]
+            return quadrant.LiquidityResult(
+                symbol,
+                description,
+                {"A": 1, "B": 2}[symbol],
+            )
 
         with (
             patch(
@@ -314,7 +318,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
 
     def test_loader_omits_candidates_without_enough_liquidity_data(self):
         def trading_dollars(market, symbol, description, from_date, api_key):
-            return symbol, description, {"A": None, "B": 2}[symbol]
+            return quadrant.LiquidityResult(
+                symbol,
+                description,
+                {"A": None, "B": 2}[symbol],
+            )
 
         with (
             patch("quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)),
@@ -346,7 +354,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
         finmind_data.DataLoader = data_loader
 
         def trading_dollars(symbol, description, start, end):
-            return symbol, description, {"A": 1, "B": 2}[symbol]
+            return quadrant.LiquidityResult(
+                symbol,
+                description,
+                {"A": 1, "B": 2}[symbol],
+            )
 
         with (
             patch.dict(
@@ -638,8 +650,8 @@ class IntradayLiquidityTests(unittest.TestCase):
                 "2026-07-17",
             )
 
-        self.assertEqual(fmp_result[2], 15)
-        self.assertEqual(finmind_result[2], 15)
+        self.assertEqual(fmp_result.trading_dollars, 15)
+        self.assertEqual(finmind_result.trading_dollars, 15)
 
     def test_fmp_and_finmind_exclude_insufficient_rows(self):
         fmp_data = [{"date": "2026-07-17", "vwap": 10, "volume": 1}]
@@ -666,8 +678,14 @@ class IntradayLiquidityTests(unittest.TestCase):
                 "2026-07-17",
             )
 
-        self.assertEqual(fmp_result, ("ABC", "Example Corp.", None))
-        self.assertEqual(finmind_result, ("1234", "Example Corp.", None))
+        self.assertEqual(
+            fmp_result,
+            quadrant.LiquidityResult("ABC", "Example Corp.", None),
+        )
+        self.assertEqual(
+            finmind_result,
+            quadrant.LiquidityResult("1234", "Example Corp.", None),
+        )
         self.assertEqual(
             stderr.getvalue(),
             "Skipping ABC trading dollar data: only 1 rows, need 2\n"
@@ -721,7 +739,10 @@ class IntradayLiquidityTests(unittest.TestCase):
                 ("symbol", "ABC"),
             ],
         )
-        self.assertEqual(result, ("ABC", "Example Corp.", 9))
+        self.assertEqual(
+            result,
+            quadrant.LiquidityResult("ABC", "Example Corp.", 9),
+        )
 
     def test_fmp_keeps_todays_row_outside_the_us_market(self):
         data = {
@@ -754,7 +775,10 @@ class IntradayLiquidityTests(unittest.TestCase):
                 ("from", "2026-05-22"),
             ],
         )
-        self.assertEqual(result, ("7203", "Toyota", 105))
+        self.assertEqual(
+            result,
+            quadrant.LiquidityResult("7203", "Toyota", 105),
+        )
 
 
 if __name__ == "__main__":

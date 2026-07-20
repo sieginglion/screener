@@ -273,6 +273,13 @@ class Candidate:
         return self.growth_score * self.valuation_score
 
 
+@dataclass(frozen=True)
+class LiquidityResult:
+    symbol: str
+    description: str
+    trading_dollars: float | None
+
+
 def adjusted_growth_score(symbol: str, score: float) -> float:
     if symbol == "BTC":
         return score * BTC_GROWTH_MULTIPLIER
@@ -373,7 +380,7 @@ def fetch_trading_dollar_fmp(
     description: str,
     from_date: str,
     api_key: str | None,
-) -> tuple[str, str, float | None]:
+) -> LiquidityResult:
     fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     data = cached_get_json(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
@@ -390,22 +397,30 @@ def fetch_trading_dollar_fmp(
         rows = [row for row in rows if row["date"] != today]
 
     daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in rows]
-    return symbol, description, recent_trading_dollars(daily_notionals, symbol)
+    return LiquidityResult(
+        symbol=symbol,
+        description=description,
+        trading_dollars=recent_trading_dollars(daily_notionals, symbol),
+    )
 
 
 def top_candidates(
-    results: Iterable[tuple[str, str, float | None]],
+    results: Iterable[LiquidityResult],
     limit: int,
     market: str,
 ) -> list[Candidate]:
     top = sorted(
-        (result for result in results if result[2] is not None),
-        key=lambda result: result[2],
+        (result for result in results if result.trading_dollars is not None),
+        key=lambda result: result.trading_dollars or 0,
         reverse=True,
     )[:limit]
     return [
-        Candidate(symbol=symbol, description=description, market=market)
-        for symbol, description, _ in top
+        Candidate(
+            symbol=result.symbol,
+            description=result.description,
+            market=market,
+        )
+        for result in top
     ]
 
 
@@ -413,7 +428,7 @@ def fetch_trading_dollars_fmp(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
     api_key: str | None,
-) -> list[tuple[str, str, float | None]]:
+) -> list[LiquidityResult]:
     from_date = (
         today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS)
     ).isoformat()
@@ -437,19 +452,23 @@ def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str):
 
 def fetch_trading_dollar_tw(
     stock_id: str, description: str, start: str, end: str
-) -> tuple[str, str, float | None]:
+) -> LiquidityResult:
     df = fetch_taiwan_stock_daily(stock_id, start, end)
     daily_notionals = [
         (str(row.date), float(row.Trading_money))
         for row in df[["date", "Trading_money"]].itertuples(index=False)
     ]
-    return stock_id, description, recent_trading_dollars(daily_notionals, stock_id)
+    return LiquidityResult(
+        symbol=stock_id,
+        description=description,
+        trading_dollars=recent_trading_dollars(daily_notionals, stock_id),
+    )
 
 
 def fetch_trading_dollars_tw(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
-) -> list[tuple[str, str, float | None]]:
+) -> list[LiquidityResult]:
     global finmind_api
 
     finmind_key = os.environ.get("FINMIND_KEY")
@@ -548,20 +567,24 @@ def write_results(results: Iterable[Candidate]) -> None:
         )
 
 
-def main() -> int:
-    load_dotenv()
-
-    growth_candidates = score_growth_candidates(load_candidates())
-    scored_candidates = score_all_valuations(growth_candidates)
-    ranked_candidates = sorted(
+def rank_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
+    return sorted(
         (
             candidate
-            for candidate in scored_candidates
+            for candidate in candidates
             if candidate.power is not None and candidate.power > 0
         ),
         key=lambda candidate: candidate.power or 0,
         reverse=True,
     )
+
+
+def main() -> int:
+    load_dotenv()
+
+    growth_candidates = score_growth_candidates(load_candidates())
+    scored_candidates = score_all_valuations(growth_candidates)
+    ranked_candidates = rank_candidates(scored_candidates)
 
     write_results(ranked_candidates)
     return 0
