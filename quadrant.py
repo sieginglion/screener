@@ -7,7 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -253,10 +253,6 @@ def tradingview_payload(market: MarketConfig, limit: int) -> dict:
     }
 
 
-def scalar_score(value: Any) -> float:
-    return float(value)
-
-
 def mean(values: Iterable[float | None]) -> float:
     values = [value for value in values if value is not None]
     return sum(values) / len(values)
@@ -266,6 +262,7 @@ def mean(values: Iterable[float | None]) -> float:
 class Candidate:
     symbol: str
     description: str
+    market: str = "u"
     growth_score: float | None = None
     valuation_score: float | None = None
 
@@ -274,12 +271,6 @@ class Candidate:
         if self.growth_score is None or self.valuation_score is None:
             return None
         return self.growth_score * self.valuation_score
-
-
-def candidate_market(symbol: str) -> str:
-    if symbol == "BTC":
-        return "c"
-    return current_market_config().code
 
 
 def adjusted_growth_score(symbol: str, score: float) -> float:
@@ -291,66 +282,53 @@ def adjusted_growth_score(symbol: str, score: float) -> float:
 def fetch_score(
     path: str,
     params: dict[str, str | int],
-    selector: Callable[[Any], float],
-) -> float:
+) -> Any:
     response = httpx.get(
         f"{SCORING_BASE_URL}/{path}",
         params=params,
         timeout=None,
     )
     response.raise_for_status()
-    values = response.json()
-    return selector(values)
+    return response.json()
 
 
-def score_candidate(
-    candidate: Candidate,
-    *,
-    path: str,
-    params: dict[str, str | int],
-    selector: Callable[[Any], float],
-    score_field: str,
-    transform: Callable[[str, float], float] | None = None,
-) -> Candidate | None:
-    try:
-        score = fetch_score(path, params, selector)
-    except Exception as exc:
-        sys.stderr.write(
-            f"Skipping {candidate.symbol} {score_field.replace('_', ' ')}: {exc}\n"
-        )
-        return None
-
-    if transform is not None:
-        score = transform(candidate.symbol, score)
-    return replace(candidate, **{score_field: score})
+def report_scoring_failure(
+    candidate: Candidate, score_name: str, exc: Exception
+) -> None:
+    sys.stderr.write(f"Skipping {candidate.symbol} {score_name}: {exc}\n")
 
 
 def score_growth(candidate: Candidate) -> Candidate | None:
-    return score_candidate(
+    try:
+        score = float(
+            fetch_score(
+                "growth",
+                {"market": candidate.market, "symbol": candidate.symbol},
+            )
+        )
+    except Exception as exc:
+        report_scoring_failure(candidate, "growth score", exc)
+        return None
+
+    return replace(
         candidate,
-        path="growth",
-        params={
-            "market": candidate_market(candidate.symbol),
-            "symbol": candidate.symbol,
-        },
-        selector=scalar_score,
-        score_field="growth_score",
-        transform=adjusted_growth_score,
+        growth_score=adjusted_growth_score(candidate.symbol, score),
     )
 
 
 def score_valuation(candidate: Candidate) -> Candidate | None:
-    return score_candidate(
-        candidate,
-        path="scores",
-        params={
-            "market": candidate_market(candidate.symbol),
-            "symbol": candidate.symbol,
-            "q": Q,
-        },
-        selector=mean,
-        score_field="valuation_score",
-    )
+    try:
+        score = mean(
+            fetch_score(
+                "scores",
+                {"market": candidate.market, "symbol": candidate.symbol, "q": Q},
+            )
+        )
+    except Exception as exc:
+        report_scoring_failure(candidate, "valuation score", exc)
+        return None
+
+    return replace(candidate, valuation_score=score)
 
 
 def fetch_symbols_from_tv(
@@ -418,6 +396,7 @@ def fetch_trading_dollar_fmp(
 def top_candidates(
     results: Iterable[tuple[str, str, float | None]],
     limit: int,
+    market: str,
 ) -> list[Candidate]:
     top = sorted(
         (result for result in results if result[2] is not None),
@@ -425,7 +404,7 @@ def top_candidates(
         reverse=True,
     )[:limit]
     return [
-        Candidate(symbol=symbol, description=description)
+        Candidate(symbol=symbol, description=description, market=market)
         for symbol, description, _ in top
     ]
 
@@ -495,11 +474,13 @@ def fetch_trading_dollars_tw(
 
 
 def load_top_candidates(
-    api_key: str | None, top_n_symbols: int, top_n_results: int
+    market: MarketConfig,
+    api_key: str | None,
+    top_n_symbols: int,
+    top_n_results: int,
 ) -> list[Candidate]:
     validate_candidate_pool_sizes(top_n_symbols, top_n_results)
 
-    market = current_market_config()
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
         market=market,
@@ -512,7 +493,7 @@ def load_top_candidates(
     else:
         liquidity = fetch_trading_dollars_fmp(market, stocks, api_key)
 
-    return top_candidates(liquidity, top_n_results)
+    return top_candidates(liquidity, top_n_results, market.code)
 
 
 def score_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
@@ -541,15 +522,17 @@ def score_all_valuations(
 
 
 def load_candidates() -> list[Candidate]:
+    market = current_market_config()
     pool_size = candidate_pool_size(RESULT_LIMIT, CANDIDATE_POOL_MULTIPLIER)
     candidates = load_top_candidates(
+        market=market,
         api_key=os.environ.get("FMP_API_KEY"),
         top_n_symbols=pool_size,
         top_n_results=RESULT_LIMIT,
     )
 
-    if current_market_config().include_bitcoin:
-        candidates.append(Candidate(symbol="BTC", description="Bitcoin"))
+    if market.include_bitcoin:
+        candidates.append(Candidate(symbol="BTC", description="Bitcoin", market="c"))
 
     return candidates
 

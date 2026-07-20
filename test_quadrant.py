@@ -71,6 +71,33 @@ class CachedGetJsonTests(unittest.TestCase):
         self.assertEqual(get.call_count, 2)
 
 
+class FetchScoreTests(unittest.TestCase):
+    def test_returns_the_raw_json_response(self):
+        params = {"market": "u", "symbol": "ABC"}
+        payload = [1, None, 3]
+        response = Mock()
+        response.json.return_value = payload
+
+        with patch.object(quadrant.httpx, "get", return_value=response) as get:
+            self.assertEqual(quadrant.fetch_score("scores", params), payload)
+
+        get.assert_called_once_with(
+            f"{quadrant.SCORING_BASE_URL}/scores",
+            params=params,
+            timeout=None,
+        )
+        response.raise_for_status.assert_called_once_with()
+        response.json.assert_called_once_with()
+
+    def test_propagates_http_errors(self):
+        url = f"{quadrant.SCORING_BASE_URL}/growth"
+        response = quadrant.httpx.Response(500, request=quadrant.httpx.Request("GET", url))
+
+        with patch.object(quadrant.httpx, "get", return_value=response):
+            with self.assertRaises(quadrant.httpx.HTTPStatusError):
+                quadrant.fetch_score("growth", {"market": "u", "symbol": "ABC"})
+
+
 class CacheClearingTests(unittest.TestCase):
     def test_liquidity_cache_matcher_recognizes_cached_json_entries(self):
         key = (
@@ -111,11 +138,13 @@ class MarketConfigurationTests(unittest.TestCase):
                 datetime.now.assert_called_once_with(ZoneInfo(market.timezone))
                 current_config.assert_not_called()
 
-    def test_candidate_market_uses_the_market_config_except_for_bitcoin(self):
+    def test_candidate_records_its_market(self):
         for code, market in quadrant.MARKET_CONFIG_BY_CODE.items():
-            with self.subTest(market=code), patch.object(quadrant, "MARKET", code):
-                self.assertEqual(quadrant.candidate_market("ABC"), market.code)
-                self.assertEqual(quadrant.candidate_market("BTC"), "c")
+            with self.subTest(market=code):
+                candidate = quadrant.Candidate(
+                    symbol="ABC", description="Example", market=market.code
+                )
+                self.assertEqual(candidate.market, market.code)
 
     def test_market_configs_capture_provider_specific_behavior(self):
         us = quadrant.MARKET_CONFIG_BY_CODE["u"]
@@ -212,18 +241,15 @@ class LoadTopCandidatesTests(unittest.TestCase):
     stocks = [("A", "Alpha; Inc."), ("B", "Beta")]
 
     def test_loader_rejects_a_pool_that_cannot_be_reranked(self):
-        with (
-            patch("quadrant.current_market_config") as config,
-            patch("quadrant.fetch_symbols_from_tv") as symbols,
-        ):
+        with patch("quadrant.fetch_symbols_from_tv") as symbols:
             with self.assertRaisesRegex(ValueError, "top_n_symbols must be greater"):
                 quadrant.load_top_candidates(
+                    market=self.market,
                     api_key="test-key",
                     top_n_symbols=2,
                     top_n_results=2,
                 )
 
-        config.assert_not_called()
         symbols.assert_not_called()
 
     def test_top_candidates_excludes_insufficient_liquidity_data(self):
@@ -234,6 +260,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
                 ("C", "Charlie", 1),
             ],
             limit=3,
+            market="u",
         )
 
         self.assertEqual(
@@ -249,7 +276,6 @@ class LoadTopCandidatesTests(unittest.TestCase):
             return symbol, description, {"A": 1, "B": 2}[symbol]
 
         with (
-            patch("quadrant.current_market_config", return_value=self.market),
             patch(
                 "quadrant.today_for_market",
                 return_value=quadrant.dt.date(2026, 7, 17),
@@ -263,6 +289,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
             ) as fetch,
         ):
             result = quadrant.load_top_candidates(
+                market=self.market,
                 api_key="test-key",
                 top_n_symbols=3,
                 top_n_results=2,
@@ -290,7 +317,6 @@ class LoadTopCandidatesTests(unittest.TestCase):
             return symbol, description, {"A": None, "B": 2}[symbol]
 
         with (
-            patch("quadrant.current_market_config", return_value=self.market),
             patch("quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)),
             patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks),
             patch(
@@ -299,12 +325,16 @@ class LoadTopCandidatesTests(unittest.TestCase):
             ),
         ):
             result = quadrant.load_top_candidates(
+                market=self.market,
                 api_key="test-key",
                 top_n_symbols=3,
                 top_n_results=2,
             )
 
-        self.assertEqual(result, [quadrant.Candidate(symbol="B", description="Beta")])
+        self.assertEqual(
+            result,
+            [quadrant.Candidate(symbol="B", description="Beta", market="u")],
+        )
 
     def test_taiwan_loader_logs_in_and_ranks_by_liquidity(self):
         market = quadrant.MARKET_CONFIG_BY_CODE["t"]
@@ -326,10 +356,6 @@ class LoadTopCandidatesTests(unittest.TestCase):
             patch.dict(quadrant.os.environ, {"FINMIND_KEY": "test-key"}),
             patch.object(quadrant, "finmind_api", None),
             patch(
-                "quadrant.current_market_config",
-                return_value=market,
-            ),
-            patch(
                 "quadrant.today_for_market",
                 return_value=quadrant.dt.date(2026, 7, 17),
             ) as today,
@@ -343,6 +369,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
             ) as fetch,
         ):
             result = quadrant.load_top_candidates(
+                market=market,
                 api_key=None,
                 top_n_symbols=3,
                 top_n_results=2,
@@ -351,8 +378,8 @@ class LoadTopCandidatesTests(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                quadrant.Candidate(symbol="B", description="Beta"),
-                quadrant.Candidate(symbol="A", description="Alpha; Inc."),
+                quadrant.Candidate(symbol="B", description="Beta", market="t"),
+                quadrant.Candidate(symbol="A", description="Alpha; Inc.", market="t"),
             ],
         )
         data_loader.assert_called_once_with()
@@ -384,23 +411,24 @@ class CandidateLoadingTests(unittest.TestCase):
                 patch(
                     "quadrant.load_top_candidates",
                     return_value=list(source_candidates),
-                ),
+                ) as load_top_candidates,
             ):
                 result = quadrant.load_candidates()
 
             expected = source_candidates + (
-                [quadrant.Candidate(symbol="BTC", description="Bitcoin")]
+                [quadrant.Candidate(symbol="BTC", description="Bitcoin", market="c")]
                 if market.include_bitcoin
                 else []
             )
             self.assertEqual(result, expected)
+            self.assertIs(load_top_candidates.call_args.kwargs["market"], market)
 
 
 class GrowthScoringTests(unittest.TestCase):
     def test_scores_are_kept_on_the_same_candidate(self):
         candidate = quadrant.Candidate(symbol="A", description="Alpha")
 
-        with patch("quadrant.fetch_score", side_effect=[2, 3]):
+        with patch("quadrant.fetch_score", side_effect=[2, [3]]):
             growth_candidate = quadrant.score_growth(candidate)
             scored_candidate = quadrant.score_valuation(growth_candidate)
 
@@ -416,32 +444,22 @@ class GrowthScoringTests(unittest.TestCase):
         self.assertEqual(scored_candidate.power, 6)
 
     def test_scoring_uses_the_expected_endpoint_parameters_and_parser(self):
-        candidate = quadrant.Candidate(symbol="A", description="Alpha")
+        candidate = quadrant.Candidate(symbol="A", description="Alpha", market="u")
 
-        with (
-            patch("quadrant.candidate_market", return_value="u") as candidate_market,
-            patch("quadrant.fetch_score", return_value=2) as fetch_score,
-        ):
+        with patch("quadrant.fetch_score", return_value=2) as fetch_score:
             quadrant.score_growth(candidate)
 
-        candidate_market.assert_called_once_with("A")
         fetch_score.assert_called_once_with(
             "growth",
             {"market": "u", "symbol": "A"},
-            quadrant.scalar_score,
         )
 
-        with (
-            patch("quadrant.candidate_market", return_value="u") as candidate_market,
-            patch("quadrant.fetch_score", return_value=2) as fetch_score,
-        ):
+        with patch("quadrant.fetch_score", return_value=[2]) as fetch_score:
             quadrant.score_valuation(candidate)
 
-        candidate_market.assert_called_once_with("A")
         fetch_score.assert_called_once_with(
             "scores",
             {"market": "u", "symbol": "A", "q": quadrant.Q},
-            quadrant.mean,
         )
 
     def test_scoring_failure_skips_the_candidate_with_a_message(self):
@@ -463,8 +481,24 @@ class GrowthScoringTests(unittest.TestCase):
                 f"Skipping A {score_label}: unavailable\n",
             )
 
+    def test_invalid_score_payload_skips_the_candidate_with_a_message(self):
+        candidate = quadrant.Candidate(symbol="A", description="Alpha")
+
+        for scorer, payload, score_label in (
+            (quadrant.score_growth, "not-a-number", "growth score"),
+            (quadrant.score_valuation, [], "valuation score"),
+        ):
+            with (
+                self.subTest(scorer=scorer.__name__),
+                patch("quadrant.fetch_score", return_value=payload),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            ):
+                self.assertIsNone(scorer(candidate))
+
+            self.assertIn(f"Skipping A {score_label}:", stderr.getvalue())
+
     def test_growth_applies_the_bitcoin_multiplier_only_to_bitcoin(self):
-        bitcoin = quadrant.Candidate(symbol="BTC", description="Bitcoin")
+        bitcoin = quadrant.Candidate(symbol="BTC", description="Bitcoin", market="c")
         stock = quadrant.Candidate(symbol="A", description="Alpha")
 
         with (
