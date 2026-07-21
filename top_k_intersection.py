@@ -59,12 +59,10 @@ def find_first_k(
 
     for index, (first_record, second_record) in enumerate(zip(first, second), start=1):
         first_seen.add(first_record.ticker)
-        if first_record.ticker in second_seen:
-            shared.add(first_record.ticker)
-
         second_seen.add(second_record.ticker)
-        if second_record.ticker in first_seen:
-            shared.add(second_record.ticker)
+
+        current_tickers = {first_record.ticker, second_record.ticker}
+        shared.update(current_tickers & first_seen & second_seen)
 
         if len(shared) == target_count:
             return index
@@ -79,9 +77,6 @@ def intersect_top_k(
     first: Sequence[Record], second: Sequence[Record], k: int
 ) -> list[Record]:
     """Return first-list records shared by both top-``k`` prefixes, in rank order."""
-    if k < 0:
-        raise ValueError("k must not be negative")
-
     second_tickers = {record.ticker for record in second[:k]}
     return [record for record in first[:k] if record.ticker in second_tickers]
 

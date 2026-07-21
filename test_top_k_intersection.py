@@ -25,6 +25,25 @@ class TopKIntersectionTests(unittest.TestCase):
         self.assertEqual(k, 2)
         self.assertEqual([record.ticker for record in intersection], ["AAA", "BSX"])
 
+    def test_counts_a_same_rank_match_once(self):
+        first = [top_k_intersection.Record("AAA", ("AAA", "Alpha"))]
+        second = [top_k_intersection.Record("AAA", ("AAA", "Alpha"))]
+
+        self.assertEqual(top_k_intersection.find_first_k(first, second, 1), 1)
+
+    def test_rejects_target_count_skipped_by_two_new_matches(self):
+        first = [
+            top_k_intersection.Record("AAA", ("AAA", "Alpha")),
+            top_k_intersection.Record("BSX", ("BSX", "Boston Scientific")),
+        ]
+        second = [
+            top_k_intersection.Record("BSX", ("BSX", "Boston Scientific")),
+            top_k_intersection.Record("AAA", ("AAA", "Alpha")),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "has exactly 1 shared tickers"):
+            top_k_intersection.find_first_k(first, second, 1)
+
     def test_cli_writes_first_file_rows_in_rank_order(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
