@@ -3,4 +3,5 @@ __pycache__/
 .env
 *.bak
 *.csv
+*.md
 config.py
