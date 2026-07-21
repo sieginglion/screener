@@ -69,7 +69,7 @@ def progress(message: str) -> None:
 
 async def invoke_gpt(
     model: str, question: str, history: Sequence[HistoryItem]
-) -> Tuple[str, int]:
+) -> str:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise GPTInvocationError("OPENAI_API_KEY is required.")
@@ -80,7 +80,7 @@ async def invoke_gpt(
         messages.append({"role": "assistant", "content": prior_answer})
     messages.append({"role": "user", "content": question})
 
-    async def request() -> Tuple[str, int]:
+    try:
         async with AsyncOpenAI(api_key=api_key) as client:
             response = await client.responses.create(
                 model=model,
@@ -106,19 +106,7 @@ async def invoke_gpt(
         if not output_text.strip():
             raise GPTInvocationError("GPT response contained no text.")
 
-        usage = getattr(response, "usage", None)
-        output_details = getattr(usage, "output_tokens_details", None)
-        completion_details = getattr(usage, "completion_tokens_details", None)
-        reasoning_tokens = (
-            getattr(output_details, "reasoning_tokens", None)
-            or getattr(completion_details, "reasoning_tokens", None)
-            or getattr(usage, "reasoning_tokens", 0)
-            or 0
-        )
-        return output_text, reasoning_tokens
-
-    try:
-        return await request()
+        return output_text
     except GPTInvocationError:
         raise
     except Exception as exc:
@@ -127,10 +115,10 @@ async def invoke_gpt(
 
 async def invoke_gemini(
     model: str, question: str, history: Sequence[HistoryItem]
-) -> Tuple[str, int]:
+) -> str:
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return "Error: GEMINI_API_KEY/GOOGLE_API_KEY not found.", 0
+        return "Error: GEMINI_API_KEY/GOOGLE_API_KEY not found."
 
     contents = []
     for prior_question, prior_answer in history:
@@ -146,28 +134,24 @@ async def invoke_gemini(
         thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
     )
 
-    async def request() -> Tuple[str, int]:
+    try:
         client = genai.Client(api_key=api_key)
         response = await client.aio.models.generate_content(
             model=model, contents=contents, config=config
         )
-        usage = getattr(response, "usage_metadata", None)
-        return response.text, getattr(usage, "thoughts_token_count", 0) or 0
-
-    try:
-        return await request()
+        return response.text
     except Exception as exc:
-        return f"Error invoking Gemini: {exc}", 0
+        return f"Error invoking Gemini: {exc}"
 
 
 async def invoke_grok(
     model: str, question: str, history: Sequence[HistoryItem]
-) -> Tuple[str, int]:
+) -> str:
     api_key = os.getenv("XAI_API_KEY", "").strip()
     if not api_key:
-        return "Error: XAI_API_KEY not found.", 0
+        return "Error: XAI_API_KEY not found."
 
-    async def request() -> Tuple[str, int]:
+    try:
         async with AsyncClient(api_key=api_key) as client:
             chat = client.chat.create(model=model, tools=[], reasoning_effort="high")
             for prior_question, prior_answer in history:
@@ -176,20 +160,14 @@ async def invoke_grok(
             chat.append(user(question))
             response = await chat.sample()
         content = response.content.strip() if response.content else ""
-        return (
-            content,
-            getattr(getattr(response, "usage", None), "reasoning_tokens", 0) or 0,
-        )
-
-    try:
-        return await request()
+        return content
     except Exception as exc:
-        return f"Error invoking Grok: {exc}", 0
+        return f"Error invoking Grok: {exc}"
 
 
 async def invoke_claude(
     model: str, question: str, history: Sequence[HistoryItem]
-) -> Tuple[str, int]:
+) -> str:
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         raise ClaudeInvocationError("ANTHROPIC_API_KEY is required.")
@@ -200,7 +178,7 @@ async def invoke_claude(
         messages.append({"role": "assistant", "content": prior_answer})
     messages.append({"role": "user", "content": question})
 
-    async def request() -> Tuple[str, int]:
+    try:
         async with anthropic.AsyncAnthropic(api_key=api_key) as client:
             response = await client.messages.create(
                 model=model,
@@ -218,10 +196,7 @@ async def invoke_claude(
         ).strip()
         if not text:
             raise ClaudeInvocationError("Claude response contained no text.")
-        return text, getattr(response.usage, "output_tokens", 0)
-
-    try:
-        return await request()
+        return text
     except ClaudeInvocationError:
         raise
     except Exception as exc:
@@ -240,16 +215,16 @@ async def call_llm(
     )
     response_blocks = [
         f'''<response model="gpt">
-{gpt[0]}
+{gpt}
 </response>''',
         f'''<response model="gemini">
-{gemini[0]}
+{gemini}
 </response>''',
         f'''<response model="claude">
-{claude[0]}
+{claude}
 </response>''',
         f'''<response model="grok">
-{grok[0]}
+{grok}
 </response>''',
     ]
     joined_responses = "\n".join(response_blocks)
@@ -259,8 +234,7 @@ async def call_llm(
 {joined_responses}
 Merge the responses into a coherent one. List any major conflicts.
 '''
-    text, _ = await invoke_gpt(models.gpt, prompt, history)
-    return text
+    return await invoke_gpt(models.gpt, prompt, history)
 
 
 async def process_batch(batch: Sequence[str], batch_number: int, models: Models) -> str:
