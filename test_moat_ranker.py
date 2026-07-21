@@ -1,7 +1,7 @@
 import os
 import types
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import moat_ranker
 
@@ -108,8 +108,98 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             )
 
 
+class PromptBuilderTests(unittest.TestCase):
+    def test_build_moat_question(self):
+        question = moat_ranker.build_moat_question(
+            ["NVDA,NVIDIA Corporation", 'NFLX,"Netflix, Inc."']
+        )
+
+        self.assertEqual(
+            question,
+            'NVDA,NVIDIA Corporation\nNFLX,"Netflix, Inc."\nWhat are their moats?',
+        )
+
+    def test_build_synthesis_prompt(self):
+        prompt = moat_ranker.build_synthesis_prompt(
+            "Question",
+            ("GPT answer", "Gemini answer", "Claude answer", "Grok answer"),
+        )
+
+        self.assertEqual(
+            prompt,
+            '''<prompt>
+Question
+</prompt>
+<response model="gpt">
+GPT answer
+</response>
+<response model="gemini">
+Gemini answer
+</response>
+<response model="claude">
+Claude answer
+</response>
+<response model="grok">
+Grok answer
+</response>
+Merge the responses into a coherent one. List any major conflicts.
+''',
+        )
+
+    def test_build_ranking_question(self):
+        question = moat_ranker.build_ranking_question(
+            ["First batch analysis", "Second batch analysis"]
+        )
+
+        self.assertEqual(
+            question,
+            "<context>\nFirst batch analysis\nSecond batch analysis\n</context>\n"
+            "Rank them into 4 tiers by moat width",
+        )
+
+
 class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
-    async def test_call_llm_synthesizes_full_provider_responses(self):
+    async def test_query_panel_returns_responses_in_provider_order(self):
+        models = moat_ranker.Models(
+            gpt="gpt-test",
+            gemini="gemini-test",
+            grok="grok-test",
+            claude="claude-test",
+        )
+        history = (("Earlier question", "Earlier answer"),)
+
+        with (
+            patch.object(
+                moat_ranker, "invoke_gpt", new=AsyncMock(return_value="GPT answer")
+            ) as invoke_gpt,
+            patch.object(
+                moat_ranker,
+                "invoke_gemini",
+                new=AsyncMock(return_value="Gemini answer"),
+            ) as invoke_gemini,
+            patch.object(
+                moat_ranker,
+                "invoke_claude",
+                new=AsyncMock(return_value="Claude answer"),
+            ) as invoke_claude,
+            patch.object(
+                moat_ranker,
+                "invoke_grok",
+                new=AsyncMock(return_value="Grok answer"),
+            ) as invoke_grok,
+        ):
+            responses = await moat_ranker.query_panel("Question", models, history)
+
+        self.assertEqual(
+            responses,
+            ("GPT answer", "Gemini answer", "Claude answer", "Grok answer"),
+        )
+        invoke_gpt.assert_awaited_once_with("gpt-test", "Question", history)
+        invoke_gemini.assert_awaited_once_with("gemini-test", "Question", history)
+        invoke_claude.assert_awaited_once_with("claude-test", "Question", history)
+        invoke_grok.assert_awaited_once_with("grok-test", "Question", history)
+
+    async def test_deliberate_synthesizes_full_provider_responses(self):
         models = moat_ranker.Models(
             gpt="gpt-test",
             gemini="gemini-test",
@@ -140,15 +230,84 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value="Grok panel answer"),
             ),
         ):
-            result = await moat_ranker.call_llm("Question", models, history)
+            result = await moat_ranker.deliberate("Question", models, history)
 
         self.assertEqual(result, "Merged answer")
         synthesis_prompt = invoke_gpt.await_args_list[1].args[1]
-        self.assertIn("GPT panel answer", synthesis_prompt)
-        self.assertIn("Gemini panel answer", synthesis_prompt)
-        self.assertIn("Claude panel answer", synthesis_prompt)
-        self.assertIn("Grok panel answer", synthesis_prompt)
+        self.assertEqual(
+            synthesis_prompt,
+            moat_ranker.build_synthesis_prompt(
+                "Question",
+                (
+                    "GPT panel answer",
+                    "Gemini panel answer",
+                    "Claude panel answer",
+                    "Grok panel answer",
+                ),
+            ),
+        )
         self.assertEqual(invoke_gpt.await_args_list[1].args[2], history)
+
+
+class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_process_batch_passes_first_synthesis_as_deeper_history(self):
+        models = moat_ranker.Models("gpt-test", "gemini-test", "grok-test", "claude-test")
+        batch = ["NVDA,NVIDIA Corporation", "NFLX,Netflix Inc."]
+        initial_question = moat_ranker.build_moat_question(batch)
+
+        with (
+            patch.object(
+                moat_ranker,
+                "deliberate",
+                new=AsyncMock(side_effect=["First synthesis", "Deeper synthesis"]),
+            ) as deliberate,
+            patch.object(moat_ranker, "progress"),
+        ):
+            result = await moat_ranker.process_batch(batch, 1, models)
+
+        self.assertEqual(result, "Deeper synthesis")
+        self.assertEqual(
+            deliberate.await_args_list,
+            [
+                call(initial_question, models),
+                call("think deeper", models, ((initial_question, "First synthesis"),)),
+            ],
+        )
+
+    async def test_run_uses_combined_batch_analyses_for_final_ranking(self):
+        args = types.SimpleNamespace(
+            batch_size=4,
+            gpt_model="gpt-test",
+            gemini_model="gemini-test",
+            grok_model="grok-test",
+            claude_model="claude-test",
+        )
+        models = moat_ranker.Models("gpt-test", "gemini-test", "grok-test", "claude-test")
+        records = [
+            "AAA,Alpha",
+            "BBB,Beta",
+            "CCC,Gamma",
+            "DDD,Delta",
+            "EEE,Echo",
+        ]
+        batch_finals = ["First batch analysis", "Second batch analysis"]
+
+        with (
+            patch.object(moat_ranker, "read_records", return_value=records),
+            patch.object(
+                moat_ranker, "process_batch", new=AsyncMock(side_effect=batch_finals)
+            ),
+            patch.object(
+                moat_ranker, "deliberate", new=AsyncMock(return_value="Final ranking")
+            ) as deliberate,
+            patch.object(moat_ranker, "progress"),
+        ):
+            result = await moat_ranker.run(args)
+
+        self.assertEqual(result, "Final ranking")
+        deliberate.assert_awaited_once_with(
+            moat_ranker.build_ranking_question(batch_finals), models
+        )
 
 
 if __name__ == "__main__":

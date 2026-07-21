@@ -67,9 +67,7 @@ def progress(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-async def invoke_gpt(
-    model: str, question: str, history: Sequence[HistoryItem]
-) -> str:
+async def invoke_gpt(model: str, question: str, history: Sequence[HistoryItem]) -> str:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise GPTInvocationError("OPENAI_API_KEY is required.")
@@ -144,9 +142,7 @@ async def invoke_gemini(
         return f"Error invoking Gemini: {exc}"
 
 
-async def invoke_grok(
-    model: str, question: str, history: Sequence[HistoryItem]
-) -> str:
+async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem]) -> str:
     api_key = os.getenv("XAI_API_KEY", "").strip()
     if not api_key:
         return "Error: XAI_API_KEY not found."
@@ -203,16 +199,12 @@ async def invoke_claude(
         raise ClaudeInvocationError(f"Error invoking Anthropic API: {exc}") from exc
 
 
-async def call_llm(
-    question: str, models: Models, history: Sequence[HistoryItem] = ()
-) -> str:
-    """Ask the full model panel concurrently and return GPT's merged response."""
-    gpt, gemini, claude, grok = await asyncio.gather(
-        invoke_gpt(models.gpt, question, history),
-        invoke_gemini(models.gemini, question, history),
-        invoke_claude(models.claude, question, history),
-        invoke_grok(models.grok, question, history),
-    )
+def build_moat_question(batch: Sequence[str]) -> str:
+    return "\n".join(batch) + "\nWhat are their moats?"
+
+
+def build_synthesis_prompt(question: str, responses: Tuple[str, str, str, str]) -> str:
+    gpt, gemini, claude, grok = responses
     response_blocks = [
         f'''<response model="gpt">
 {gpt}
@@ -227,27 +219,65 @@ async def call_llm(
 {grok}
 </response>''',
     ]
-    joined_responses = "\n".join(response_blocks)
-    prompt = f'''<prompt>
+    return f'''<prompt>
 {question}
 </prompt>
-{joined_responses}
+{"\n".join(response_blocks)}
 Merge the responses into a coherent one. List any major conflicts.
 '''
+
+
+def build_ranking_question(batch_finals: Sequence[str]) -> str:
+    return (
+        "<context>\n"
+        + "\n".join(batch_finals)
+        + "\n</context>\nRank them into 4 tiers by moat width"
+    )
+
+
+async def query_panel(
+    question: str, models: Models, history: Sequence[HistoryItem] = ()
+) -> Tuple[str, str, str, str]:
+    """Ask the full model panel concurrently."""
+    responses = await asyncio.gather(
+        invoke_gpt(models.gpt, question, history),
+        invoke_gemini(models.gemini, question, history),
+        invoke_claude(models.claude, question, history),
+        invoke_grok(models.grok, question, history),
+    )
+    return tuple(responses)
+
+
+async def synthesize(
+    question: str,
+    responses: Tuple[str, str, str, str],
+    models: Models,
+    history: Sequence[HistoryItem] = (),
+) -> str:
+    """Have GPT merge the panel's responses."""
+    prompt = build_synthesis_prompt(question, responses)
     return await invoke_gpt(models.gpt, prompt, history)
 
 
+async def deliberate(
+    question: str, models: Models, history: Sequence[HistoryItem] = ()
+) -> str:
+    """Ask the panel, then return GPT's synthesis."""
+    responses = await query_panel(question, models, history)
+    return await synthesize(question, responses, models, history)
+
+
 async def process_batch(batch: Sequence[str], batch_number: int, models: Models) -> str:
-    initial_question = "\n".join(batch) + "\nWhat are their moats?"
+    initial_question = build_moat_question(batch)
     progress(f"Batch {batch_number}: first-pass moat analysis")
-    first_synthesis = await call_llm(initial_question, models)
+    first_synthesis = await deliberate(initial_question, models)
 
     # In pareja.py, the next turn's history contains the prior user question and
     # GPT's displayed synthesis. Give every model that same shared history.
     # The requested next user turn is deliberately just these two words.
     deeper_history = ((initial_question, first_synthesis),)
     progress(f"Batch {batch_number}: deeper analysis")
-    return await call_llm("think deeper", models, deeper_history)
+    return await deliberate("think deeper", models, deeper_history)
 
 
 def read_records() -> List[str]:
@@ -314,13 +344,9 @@ async def run(args: argparse.Namespace) -> str:
         )
     )
 
-    ranking_question = (
-        "<context>\n"
-        + "\n".join(batch_finals)
-        + "\n</context>\nRank them into 4 tiers by moat width"
-    )
+    ranking_question = build_ranking_question(batch_finals)
     progress("Final ranking: sending all batch findings to the model panel")
-    return await call_llm(ranking_question, models)
+    return await deliberate(ranking_question, models)
 
 
 def main() -> int:
