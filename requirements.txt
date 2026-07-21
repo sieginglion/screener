@@ -1,5 +1,7 @@
+anthropic
 diskcache
 FinMind
+google-genai
 httpx
 openai
 python-dotenv
