@@ -46,20 +46,8 @@ MODEL_CLAUDE = "claude-opus-4-8"
 HistoryItem = Tuple[str, str]
 
 
-class GPTInvocationError(RuntimeError):
-    """Raised when GPT cannot provide a usable response for a required step."""
-
-
-class GeminiInvocationError(RuntimeError):
-    """Raised when Gemini cannot provide a usable response for a required step."""
-
-
-class GrokInvocationError(RuntimeError):
-    """Raised when Grok cannot provide a usable response for a required step."""
-
-
-class ClaudeInvocationError(RuntimeError):
-    """Raised when Claude cannot provide a usable response for a required step."""
+class ModelInvocationError(RuntimeError):
+    """Raised when a model cannot provide a usable response."""
 
 
 @dataclass(frozen=True)
@@ -70,6 +58,14 @@ class Models:
     claude: str
 
 
+@dataclass(frozen=True)
+class PanelResponses:
+    gpt: str
+    gemini: str
+    claude: str
+    grok: str
+
+
 def progress(message: str) -> None:
     """Keep stdout reserved for the final synthesis."""
     print(message, file=sys.stderr, flush=True)
@@ -78,7 +74,7 @@ def progress(message: str) -> None:
 async def invoke_gpt(model: str, question: str, history: Sequence[HistoryItem]) -> str:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
-        raise GPTInvocationError("OPENAI_API_KEY is required.")
+        raise ModelInvocationError("OPENAI_API_KEY is required.")
 
     messages: List[Dict[str, str]] = []
     for prior_question, prior_answer in history:
@@ -98,25 +94,25 @@ async def invoke_gpt(model: str, question: str, history: Sequence[HistoryItem]) 
             code = getattr(response_error, "code", "") or ""
             message = getattr(response_error, "message", "") or "Unknown model failure."
             code_text = f" [{code}]" if code else ""
-            raise GPTInvocationError(f"GPT model response{code_text}: {message}")
+            raise ModelInvocationError(f"GPT model response{code_text}: {message}")
 
         status = getattr(response, "status", None)
         if status == "incomplete":
             details = getattr(response, "incomplete_details", None)
             reason = getattr(details, "reason", None) or "unknown reason"
-            raise GPTInvocationError(f"GPT incomplete response ({reason}).")
+            raise ModelInvocationError(f"GPT incomplete response ({reason}).")
         if status and status != "completed":
-            raise GPTInvocationError(f"GPT response status {status!r}.")
+            raise ModelInvocationError(f"GPT response status {status!r}.")
 
         output_text = getattr(response, "output_text", "") or ""
         if not output_text.strip():
-            raise GPTInvocationError("GPT response contained no text.")
+            raise ModelInvocationError("GPT response contained no text.")
 
         return output_text
-    except GPTInvocationError:
+    except ModelInvocationError:
         raise
     except Exception as exc:
-        raise GPTInvocationError(f"Error invoking OpenAI API: {exc}") from exc
+        raise ModelInvocationError(f"Error invoking OpenAI API: {exc}") from exc
 
 
 async def invoke_gemini(
@@ -124,7 +120,7 @@ async def invoke_gemini(
 ) -> str:
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise GeminiInvocationError("GEMINI_API_KEY/GOOGLE_API_KEY is required.")
+        raise ModelInvocationError("GEMINI_API_KEY/GOOGLE_API_KEY is required.")
 
     try:
         contents = []
@@ -151,11 +147,11 @@ async def invoke_gemini(
         block_reason = getattr(prompt_feedback, "block_reason", None)
         if block_reason:
             reason = getattr(block_reason, "value", block_reason)
-            raise GeminiInvocationError(f"Gemini prompt was blocked ({reason}).")
+            raise ModelInvocationError(f"Gemini prompt was blocked ({reason}).")
 
         candidates = getattr(response, "candidates", None)
         if not candidates:
-            raise GeminiInvocationError("Gemini response contained no candidates.")
+            raise ModelInvocationError("Gemini response contained no candidates.")
 
         candidate = candidates[0]
         finish_reason = getattr(candidate, "finish_reason", None)
@@ -164,24 +160,24 @@ async def invoke_gemini(
             reason = finish_reason_value or "unknown reason"
             detail = getattr(candidate, "finish_message", None)
             detail_text = f": {detail}" if detail else ""
-            raise GeminiInvocationError(
+            raise ModelInvocationError(
                 f"Gemini response stopped with {reason!r}{detail_text}"
             )
 
         output_text = getattr(response, "text", None)
         if not isinstance(output_text, str) or not output_text.strip():
-            raise GeminiInvocationError("Gemini response contained no text.")
+            raise ModelInvocationError("Gemini response contained no text.")
         return output_text
-    except GeminiInvocationError:
+    except ModelInvocationError:
         raise
     except Exception as exc:
-        raise GeminiInvocationError(f"Error invoking Gemini API: {exc}") from exc
+        raise ModelInvocationError(f"Error invoking Gemini API: {exc}") from exc
 
 
 async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem]) -> str:
     api_key = os.getenv("XAI_API_KEY", "").strip()
     if not api_key:
-        raise GrokInvocationError("XAI_API_KEY is required.")
+        raise ModelInvocationError("XAI_API_KEY is required.")
 
     try:
         async with AsyncClient(api_key=api_key) as client:
@@ -197,22 +193,22 @@ async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem])
             code = getattr(response_error, "code", "") or ""
             message = getattr(response_error, "message", "") or "Unknown model failure."
             code_text = f" [{code}]" if code else ""
-            raise GrokInvocationError(f"Grok model response{code_text}: {message}")
+            raise ModelInvocationError(f"Grok model response{code_text}: {message}")
 
         finish_reason = getattr(response, "finish_reason", None)
         if finish_reason not in {"REASON_STOP", "STOP", "stop"}:
-            raise GrokInvocationError(
+            raise ModelInvocationError(
                 f"Grok response stopped with {finish_reason or 'unknown reason'!r}."
             )
 
         content = getattr(response, "content", None)
         if not isinstance(content, str) or not content.strip():
-            raise GrokInvocationError("Grok response contained no text.")
+            raise ModelInvocationError("Grok response contained no text.")
         return content.strip()
-    except GrokInvocationError:
+    except ModelInvocationError:
         raise
     except Exception as exc:
-        raise GrokInvocationError(f"Error invoking xAI API: {exc}") from exc
+        raise ModelInvocationError(f"Error invoking xAI API: {exc}") from exc
 
 
 async def invoke_claude(
@@ -220,7 +216,7 @@ async def invoke_claude(
 ) -> str:
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        raise ClaudeInvocationError("ANTHROPIC_API_KEY is required.")
+        raise ModelInvocationError("ANTHROPIC_API_KEY is required.")
 
     messages = []
     for prior_question, prior_answer in history:
@@ -238,39 +234,38 @@ async def invoke_claude(
                 output_config={"effort": "xhigh"},
             )
         if response.stop_reason != "end_turn":
-            raise ClaudeInvocationError(
+            raise ModelInvocationError(
                 f"Claude response stopped with {response.stop_reason!r}."
             )
         text = "\n".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
         if not text:
-            raise ClaudeInvocationError("Claude response contained no text.")
+            raise ModelInvocationError("Claude response contained no text.")
         return text
-    except ClaudeInvocationError:
+    except ModelInvocationError:
         raise
     except Exception as exc:
-        raise ClaudeInvocationError(f"Error invoking Anthropic API: {exc}") from exc
+        raise ModelInvocationError(f"Error invoking Anthropic API: {exc}") from exc
 
 
 def build_moat_question(batch: Sequence[str]) -> str:
     return "\n".join(batch) + "\nWhat are their moats?"
 
 
-def build_synthesis_prompt(question: str, responses: Tuple[str, str, str, str]) -> str:
-    gpt, gemini, claude, grok = responses
+def build_synthesis_prompt(question: str, responses: PanelResponses) -> str:
     response_blocks = [
         f'''<response model="gpt">
-{gpt}
+{responses.gpt}
 </response>''',
         f'''<response model="gemini">
-{gemini}
+{responses.gemini}
 </response>''',
         f'''<response model="claude">
-{claude}
+{responses.claude}
 </response>''',
         f'''<response model="grok">
-{grok}
+{responses.grok}
 </response>''',
     ]
     return f'''<prompt>
@@ -291,7 +286,7 @@ def build_ranking_question(batch_finals: Sequence[str]) -> str:
 
 async def query_panel(
     question: str, models: Models, history: Sequence[HistoryItem] = ()
-) -> Tuple[str, str, str, str]:
+) -> PanelResponses:
     """Ask the full model panel concurrently."""
     responses = await asyncio.gather(
         invoke_gpt(models.gpt, question, history),
@@ -299,12 +294,12 @@ async def query_panel(
         invoke_claude(models.claude, question, history),
         invoke_grok(models.grok, question, history),
     )
-    return tuple(responses)
+    return PanelResponses(*responses)
 
 
 async def synthesize(
     question: str,
-    responses: Tuple[str, str, str, str],
+    responses: PanelResponses,
     models: Models,
     history: Sequence[HistoryItem] = (),
 ) -> str:
@@ -411,10 +406,7 @@ def main() -> int:
     except (
         ValueError,
         csv.Error,
-        GPTInvocationError,
-        GeminiInvocationError,
-        GrokInvocationError,
-        ClaudeInvocationError,
+        ModelInvocationError,
     ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

@@ -142,7 +142,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             for _, expected_error in responses:
                 with self.subTest(expected_error=expected_error):
                     with self.assertRaisesRegex(
-                        moat_ranker.GrokInvocationError, expected_error
+                        moat_ranker.ModelInvocationError, expected_error
                     ):
                         await moat_ranker.invoke_grok("grok-test", "Question", ())
 
@@ -158,7 +158,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             with self.assertRaisesRegex(
-                moat_ranker.GrokInvocationError, "invalid model"
+                moat_ranker.ModelInvocationError, "invalid model"
             ):
                 await moat_ranker.invoke_grok("grok-test", "Question", ())
 
@@ -175,7 +175,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             with self.assertRaisesRegex(
-                moat_ranker.GrokInvocationError, "connection failed"
+                moat_ranker.ModelInvocationError, "connection failed"
             ):
                 await moat_ranker.invoke_grok("grok-test", "Question", ())
 
@@ -271,7 +271,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             for _, expected_error in responses:
                 with self.subTest(expected_error=expected_error):
                     with self.assertRaisesRegex(
-                        moat_ranker.GeminiInvocationError, expected_error
+                        moat_ranker.ModelInvocationError, expected_error
                     ):
                         await moat_ranker.invoke_gemini("gemini-test", "Question", ())
 
@@ -285,7 +285,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             with self.assertRaisesRegex(
-                moat_ranker.GeminiInvocationError, "invalid config"
+                moat_ranker.ModelInvocationError, "invalid config"
             ):
                 await moat_ranker.invoke_gemini("gemini-test", "Question", ())
 
@@ -298,20 +298,21 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moat_ranker.genai, "Client", return_value=client),
         ):
             with self.assertRaisesRegex(
-                moat_ranker.GeminiInvocationError, "connection failed"
+                moat_ranker.ModelInvocationError, "connection failed"
             ):
                 await moat_ranker.invoke_gemini("gemini-test", "Question", ())
 
-    async def test_missing_keys_raise_provider_errors(self):
+    async def test_missing_keys_raise_model_invocation_error(self):
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaises(moat_ranker.GPTInvocationError):
-                await moat_ranker.invoke_gpt("gpt-test", "Question", ())
-            with self.assertRaises(moat_ranker.GeminiInvocationError):
-                await moat_ranker.invoke_gemini("gemini-test", "Question", ())
-            with self.assertRaises(moat_ranker.GrokInvocationError):
-                await moat_ranker.invoke_grok("grok-test", "Question", ())
-            with self.assertRaises(moat_ranker.ClaudeInvocationError):
-                await moat_ranker.invoke_claude("claude-test", "Question", ())
+            for invoke, model in (
+                (moat_ranker.invoke_gpt, "gpt-test"),
+                (moat_ranker.invoke_gemini, "gemini-test"),
+                (moat_ranker.invoke_grok, "grok-test"),
+                (moat_ranker.invoke_claude, "claude-test"),
+            ):
+                with self.subTest(invoke=invoke.__name__):
+                    with self.assertRaises(moat_ranker.ModelInvocationError):
+                        await invoke(model, "Question", ())
 
 
 class PromptBuilderTests(unittest.TestCase):
@@ -328,7 +329,12 @@ class PromptBuilderTests(unittest.TestCase):
     def test_build_synthesis_prompt(self):
         prompt = moat_ranker.build_synthesis_prompt(
             "Question",
-            ("GPT answer", "Gemini answer", "Claude answer", "Grok answer"),
+            moat_ranker.PanelResponses(
+                gpt="GPT answer",
+                gemini="Gemini answer",
+                claude="Claude answer",
+                grok="Grok answer",
+            ),
         )
 
         self.assertEqual(
@@ -398,7 +404,12 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             responses,
-            ("GPT answer", "Gemini answer", "Claude answer", "Grok answer"),
+            moat_ranker.PanelResponses(
+                gpt="GPT answer",
+                gemini="Gemini answer",
+                claude="Claude answer",
+                grok="Grok answer",
+            ),
         )
         invoke_gpt.assert_awaited_once_with("gpt-test", "Question", history)
         invoke_gemini.assert_awaited_once_with("gemini-test", "Question", history)
@@ -412,7 +423,7 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             grok="grok-test",
             claude="claude-test",
         )
-        failure = moat_ranker.GeminiInvocationError("Gemini unavailable")
+        failure = moat_ranker.ModelInvocationError("Gemini unavailable")
 
         with (
             patch.object(
@@ -431,7 +442,7 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             with self.assertRaisesRegex(
-                moat_ranker.GeminiInvocationError, "Gemini unavailable"
+                moat_ranker.ModelInvocationError, "Gemini unavailable"
             ):
                 await moat_ranker.query_panel("Question", models)
 
@@ -448,13 +459,13 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
                 moat_ranker,
                 "query_panel",
                 new=AsyncMock(
-                    side_effect=moat_ranker.GrokInvocationError("Grok unavailable")
+                    side_effect=moat_ranker.ModelInvocationError("Grok unavailable")
                 ),
             ),
             patch.object(moat_ranker, "synthesize", new=AsyncMock()) as synthesize,
         ):
             with self.assertRaisesRegex(
-                moat_ranker.GrokInvocationError, "Grok unavailable"
+                moat_ranker.ModelInvocationError, "Grok unavailable"
             ):
                 await moat_ranker.deliberate("Question", models)
 
@@ -499,11 +510,11 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             synthesis_prompt,
             moat_ranker.build_synthesis_prompt(
                 "Question",
-                (
-                    "GPT panel answer",
-                    "Gemini panel answer",
-                    "Claude panel answer",
-                    "Grok panel answer",
+                moat_ranker.PanelResponses(
+                    gpt="GPT panel answer",
+                    gemini="Gemini panel answer",
+                    claude="Claude panel answer",
+                    grok="Grok panel answer",
                 ),
             ),
         )
@@ -572,32 +583,24 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MainTests(unittest.TestCase):
-    def test_main_reports_gemini_and_grok_failures(self):
+    def test_main_reports_model_invocation_failures(self):
         args = types.SimpleNamespace()
-
-        for error_type in (
-            moat_ranker.GeminiInvocationError,
-            moat_ranker.GrokInvocationError,
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        error = moat_ranker.ModelInvocationError("panel unavailable")
+        with (
+            patch.object(moat_ranker, "load_dotenv"),
+            patch.object(moat_ranker, "parse_args", return_value=args),
+            patch.object(moat_ranker, "run", new=AsyncMock(side_effect=error)) as run,
+            patch.object(moat_ranker.sys, "stdout", stdout),
+            patch.object(moat_ranker.sys, "stderr", stderr),
         ):
-            with self.subTest(error_type=error_type.__name__):
-                stdout = io.StringIO()
-                stderr = io.StringIO()
-                error = error_type("panel unavailable")
-                with (
-                    patch.object(moat_ranker, "load_dotenv"),
-                    patch.object(moat_ranker, "parse_args", return_value=args),
-                    patch.object(
-                        moat_ranker, "run", new=AsyncMock(side_effect=error)
-                    ) as run,
-                    patch.object(moat_ranker.sys, "stdout", stdout),
-                    patch.object(moat_ranker.sys, "stderr", stderr),
-                ):
-                    exit_code = moat_ranker.main()
+            exit_code = moat_ranker.main()
 
-                self.assertEqual(exit_code, 2)
-                self.assertEqual(stdout.getvalue(), "")
-                self.assertEqual(stderr.getvalue(), "Error: panel unavailable\n")
-                run.assert_awaited_once_with(args)
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "Error: panel unavailable\n")
+        run.assert_awaited_once_with(args)
 
 
 if __name__ == "__main__":
