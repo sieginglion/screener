@@ -93,9 +93,44 @@ class PanelResponses:
     grok: str
 
 
+@dataclass(frozen=True)
+class Panel:
+    """The models and clients that make up the deliberation panel."""
+
+    models: Models
+    clients: PanelClients
+
+    async def query(
+        self, question: str, history: Sequence[HistoryItem] = ()
+    ) -> PanelResponses:
+        """Ask the full model panel concurrently."""
+        gpt, gemini, claude, grok = await asyncio.gather(
+            invoke_gpt(self.clients.gpt, self.models.gpt, question, history),
+            invoke_gemini(self.clients.gemini, self.models.gemini, question, history),
+            invoke_claude(self.clients.claude, self.models.claude, question, history),
+            invoke_grok(self.clients.grok, self.models.grok, question, history),
+        )
+        return PanelResponses(gpt=gpt, gemini=gemini, claude=claude, grok=grok)
+
+    async def deliberate(
+        self, question: str, history: Sequence[HistoryItem] = ()
+    ) -> str:
+        """Ask the panel, then have GPT merge its responses."""
+        responses = await self.query(question, history)
+        prompt = build_synthesis_prompt(question, responses)
+        return await invoke_gpt(self.clients.gpt, self.models.gpt, prompt, history)
+
+
 def progress(message: str) -> None:
     """Keep stdout reserved for the final synthesis."""
     print(message, file=sys.stderr, flush=True)
+
+
+def require_text(provider: str, text: object) -> str:
+    """Return a nonblank response or raise a consistent provider error."""
+    if not isinstance(text, str) or not text.strip():
+        raise ModelInvocationError(f"{provider} response contained no text.")
+    return text
 
 
 async def invoke_gpt(
@@ -115,17 +150,13 @@ async def invoke_gpt(
         )
         response_status = response.status
         output_text = response.output_text
-        output_is_blank = not output_text.strip()
     except Exception as exc:
         raise ModelInvocationError(f"Error invoking OpenAI API: {exc}") from exc
 
     if response_status != "completed":
         raise ModelInvocationError(f"GPT response status {response_status!r}.")
 
-    if output_is_blank:
-        raise ModelInvocationError("GPT response contained no text.")
-
-    return output_text
+    return require_text("GPT", output_text)
 
 
 async def invoke_gemini(
@@ -151,6 +182,10 @@ async def invoke_gemini(
             model=model, contents=contents, config=config
         )
 
+    except Exception as exc:
+        raise ModelInvocationError(f"Error invoking Gemini API: {exc}") from exc
+
+    try:
         candidates = response.candidates
         if not candidates:
             raise ModelInvocationError("Gemini response contained no candidates.")
@@ -168,13 +203,10 @@ async def invoke_gemini(
             )
 
         output_text = response.text
-        if not output_text or not output_text.strip():
-            raise ModelInvocationError("Gemini response contained no text.")
-        return output_text
-    except ModelInvocationError:
-        raise
-    except Exception as exc:
-        raise ModelInvocationError(f"Error invoking Gemini API: {exc}") from exc
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise ModelInvocationError(f"Malformed Gemini response: {exc}") from exc
+
+    return require_text("Gemini", output_text)
 
 
 async def invoke_grok(
@@ -187,19 +219,19 @@ async def invoke_grok(
             chat.append(assistant(prior_answer))
         chat.append(user(question))
         response = await chat.sample()
-
-        finish_reason = response.finish_reason
-        if finish_reason != "REASON_STOP":
-            raise ModelInvocationError(f"Grok response stopped with {finish_reason!r}.")
-
-        content = response.content
-        if not content.strip():
-            raise ModelInvocationError("Grok response contained no text.")
-        return content.strip()
-    except ModelInvocationError:
-        raise
     except Exception as exc:
         raise ModelInvocationError(f"Error invoking xAI API: {exc}") from exc
+
+    try:
+        finish_reason = response.finish_reason
+        content = response.content
+    except AttributeError as exc:
+        raise ModelInvocationError(f"Malformed Grok response: {exc}") from exc
+
+    if finish_reason != "REASON_STOP":
+        raise ModelInvocationError(f"Grok response stopped with {finish_reason!r}.")
+
+    return require_text("Grok", content).strip()
 
 
 async def invoke_claude(
@@ -232,9 +264,7 @@ async def invoke_claude(
     text = "\n".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
-    if not text:
-        raise ModelInvocationError("Claude response contained no text.")
-    return text
+    return require_text("Claude", text)
 
 
 def build_moat_question(batch: Sequence[str]) -> str:
@@ -273,63 +303,20 @@ def build_ranking_question(batch_finals: Sequence[str]) -> str:
     )
 
 
-async def query_panel(
-    question: str,
-    models: Models,
-    clients: PanelClients,
-    history: Sequence[HistoryItem] = (),
-) -> PanelResponses:
-    """Ask the full model panel concurrently."""
-    gpt, gemini, claude, grok = await asyncio.gather(
-        invoke_gpt(clients.gpt, models.gpt, question, history),
-        invoke_gemini(clients.gemini, models.gemini, question, history),
-        invoke_claude(clients.claude, models.claude, question, history),
-        invoke_grok(clients.grok, models.grok, question, history),
-    )
-    return PanelResponses(gpt=gpt, gemini=gemini, claude=claude, grok=grok)
-
-
-async def synthesize(
-    question: str,
-    responses: PanelResponses,
-    models: Models,
-    clients: PanelClients,
-    history: Sequence[HistoryItem] = (),
-) -> str:
-    """Have GPT merge the panel's responses."""
-    prompt = build_synthesis_prompt(question, responses)
-    return await invoke_gpt(clients.gpt, models.gpt, prompt, history)
-
-
-async def deliberate(
-    question: str,
-    models: Models,
-    clients: PanelClients,
-    history: Sequence[HistoryItem] = (),
-) -> str:
-    """Ask the panel, then return GPT's synthesis."""
-    responses = await query_panel(question, models, clients, history)
-    return await synthesize(question, responses, models, clients, history)
-
-
-async def process_batch(
-    batch: Sequence[str], batch_number: int, models: Models, clients: PanelClients
-) -> str:
+async def process_batch(batch: Sequence[str], batch_number: int, panel: Panel) -> str:
     initial_question = build_moat_question(batch)
     progress(f"Batch {batch_number}: first-pass moat analysis")
-    first_synthesis = await deliberate(initial_question, models, clients)
+    first_synthesis = await panel.deliberate(initial_question)
 
     # In pareja.py, the next turn's history contains the prior user question and
     # GPT's displayed synthesis. Give every model that same shared history.
     # The requested next user turn is deliberately just these two words.
     deeper_history = ((initial_question, first_synthesis),)
     progress(f"Batch {batch_number}: deeper analysis")
-    return await deliberate("think deeper", models, clients, deeper_history)
+    return await panel.deliberate("think deeper", deeper_history)
 
 
-async def rank_records(
-    records: Sequence[str], models: Models, clients: PanelClients
-) -> str:
+async def rank_records(records: Sequence[str], panel: Panel) -> str:
     """Process batches and produce the final panel ranking."""
     batches = [
         records[index : index + BATCH_SIZE]
@@ -339,7 +326,7 @@ async def rank_records(
 
     async def process_batch_with_limit(batch_number: int, batch: Sequence[str]) -> str:
         async with batch_semaphore:
-            return await process_batch(batch, batch_number, models, clients)
+            return await process_batch(batch, batch_number, panel)
 
     batch_finals = await asyncio.gather(
         *(
@@ -350,7 +337,7 @@ async def rank_records(
 
     ranking_question = build_ranking_question(batch_finals)
     progress("Final ranking: sending all batch findings to the model panel")
-    return await deliberate(ranking_question, models, clients)
+    return await panel.deliberate(ranking_question)
 
 
 def read_records() -> list[str]:
@@ -433,7 +420,7 @@ async def run(args: argparse.Namespace) -> str:
             grok=grok_client,
             claude=claude_client,
         )
-        return await rank_records(records, models, clients)
+        return await rank_records(records, Panel(models=models, clients=clients))
 
 
 def main() -> int:
