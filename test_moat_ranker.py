@@ -10,12 +10,25 @@ import moat_ranker
 class AsyncContextManager:
     def __init__(self, value):
         self.value = value
+        self.entered = False
+        self.exited = False
 
     async def __aenter__(self):
+        self.entered = True
         return self.value
 
     async def __aexit__(self, exc_type, exc, traceback):
+        self.exited = True
         return False
+
+
+def make_panel_clients():
+    return moat_ranker.PanelClients(
+        gpt=MagicMock(name="gpt_client"),
+        gemini=MagicMock(name="gemini_client"),
+        claude=MagicMock(name="claude_client"),
+        grok=MagicMock(name="grok_client"),
+    )
 
 
 class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
@@ -28,15 +41,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.responses.create = AsyncMock(return_value=response)
 
-        with (
-            patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker,
-                "AsyncOpenAI",
-                return_value=AsyncContextManager(client),
-            ),
-        ):
-            result = await moat_ranker.invoke_gpt("gpt-test", "Question", ())
+        result = await moat_ranker.invoke_gpt(client, "gpt-test", "Question", ())
 
         self.assertEqual(result, "GPT result")
 
@@ -54,16 +59,11 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.aio.models.generate_content = AsyncMock(return_value=response)
 
-        with (
-            patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker.genai, "Client", return_value=client
-            ) as client_factory,
-        ):
-            result = await moat_ranker.invoke_gemini("gemini-test", "Question", ())
+        result = await moat_ranker.invoke_gemini(
+            client, "gemini-test", "Question", ()
+        )
 
         self.assertEqual(result, "Gemini result")
-        client_factory.assert_called_once_with(api_key="test-key")
 
     async def test_grok_returns_stripped_response_text(self):
         response = types.SimpleNamespace(
@@ -76,18 +76,9 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.chat.create.return_value = chat
 
-        with (
-            patch.dict(os.environ, {"XAI_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker,
-                "AsyncClient",
-                return_value=AsyncContextManager(client),
-            ) as client_factory,
-        ):
-            result = await moat_ranker.invoke_grok("grok-test", "Question", ())
+        result = await moat_ranker.invoke_grok(client, "grok-test", "Question", ())
 
         self.assertEqual(result, "Grok result")
-        client_factory.assert_called_once_with(api_key="test-key")
 
     async def test_grok_rejects_api_and_response_failures(self):
         responses = [
@@ -131,53 +122,29 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.chat.create.return_value = chat
 
-        with (
-            patch.dict(os.environ, {"XAI_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker,
-                "AsyncClient",
-                return_value=AsyncContextManager(client),
-            ),
-        ):
-            for _, expected_error in responses:
-                with self.subTest(expected_error=expected_error):
-                    with self.assertRaisesRegex(
-                        moat_ranker.ModelInvocationError, expected_error
-                    ):
-                        await moat_ranker.invoke_grok("grok-test", "Question", ())
+        for _, expected_error in responses:
+            with self.subTest(expected_error=expected_error):
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError, expected_error
+                ):
+                    await moat_ranker.invoke_grok(client, "grok-test", "Question", ())
 
     async def test_grok_wraps_setup_and_api_exceptions(self):
         client = MagicMock()
         client.chat.create.side_effect = RuntimeError("invalid model")
-        with (
-            patch.dict(os.environ, {"XAI_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker,
-                "AsyncClient",
-                return_value=AsyncContextManager(client),
-            ),
+        with self.assertRaisesRegex(
+            moat_ranker.ModelInvocationError, "invalid model"
         ):
-            with self.assertRaisesRegex(
-                moat_ranker.ModelInvocationError, "invalid model"
-            ):
-                await moat_ranker.invoke_grok("grok-test", "Question", ())
+            await moat_ranker.invoke_grok(client, "grok-test", "Question", ())
 
         chat = MagicMock()
         chat.sample = AsyncMock(side_effect=RuntimeError("connection failed"))
         client = MagicMock()
         client.chat.create.return_value = chat
-        with (
-            patch.dict(os.environ, {"XAI_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker,
-                "AsyncClient",
-                return_value=AsyncContextManager(client),
-            ),
+        with self.assertRaisesRegex(
+            moat_ranker.ModelInvocationError, "connection failed"
         ):
-            with self.assertRaisesRegex(
-                moat_ranker.ModelInvocationError, "connection failed"
-            ):
-                await moat_ranker.invoke_grok("grok-test", "Question", ())
+            await moat_ranker.invoke_grok(client, "grok-test", "Question", ())
 
     async def test_claude_returns_response_text(self):
         response = types.SimpleNamespace(
@@ -187,15 +154,9 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
 
-        with (
-            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker.anthropic,
-                "AsyncAnthropic",
-                return_value=AsyncContextManager(client),
-            ),
-        ):
-            result = await moat_ranker.invoke_claude("claude-test", "Question", ())
+        result = await moat_ranker.invoke_claude(
+            client, "claude-test", "Question", ()
+        )
 
         self.assertEqual(result, "Claude result")
 
@@ -264,55 +225,84 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             side_effect=[response for response, _ in responses]
         )
 
-        with (
-            patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}),
-            patch.object(moat_ranker.genai, "Client", return_value=client),
-        ):
-            for _, expected_error in responses:
-                with self.subTest(expected_error=expected_error):
-                    with self.assertRaisesRegex(
-                        moat_ranker.ModelInvocationError, expected_error
-                    ):
-                        await moat_ranker.invoke_gemini("gemini-test", "Question", ())
+        for _, expected_error in responses:
+            with self.subTest(expected_error=expected_error):
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError, expected_error
+                ):
+                    await moat_ranker.invoke_gemini(
+                        client, "gemini-test", "Question", ()
+                    )
 
     async def test_gemini_wraps_setup_and_api_exceptions(self):
-        with (
-            patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}),
-            patch.object(
-                moat_ranker.types,
-                "GenerateContentConfig",
-                side_effect=RuntimeError("invalid config"),
-            ),
+        with patch.object(
+            moat_ranker.types,
+            "GenerateContentConfig",
+            side_effect=RuntimeError("invalid config"),
         ):
             with self.assertRaisesRegex(
                 moat_ranker.ModelInvocationError, "invalid config"
             ):
-                await moat_ranker.invoke_gemini("gemini-test", "Question", ())
+                await moat_ranker.invoke_gemini(
+                    MagicMock(), "gemini-test", "Question", ()
+                )
 
         client = MagicMock()
         client.aio.models.generate_content = AsyncMock(
             side_effect=RuntimeError("connection failed")
         )
-        with (
-            patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}),
-            patch.object(moat_ranker.genai, "Client", return_value=client),
+        with self.assertRaisesRegex(
+            moat_ranker.ModelInvocationError, "connection failed"
         ):
-            with self.assertRaisesRegex(
-                moat_ranker.ModelInvocationError, "connection failed"
-            ):
-                await moat_ranker.invoke_gemini("gemini-test", "Question", ())
+            await moat_ranker.invoke_gemini(client, "gemini-test", "Question", ())
 
-    async def test_missing_keys_raise_model_invocation_error(self):
+    def test_load_api_keys_uses_google_or_gemini_key(self):
+        expected = moat_ranker.ApiKeys(
+            gpt="openai-key",
+            gemini="google-key",
+            grok="xai-key",
+            claude="anthropic-key",
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "openai-key",
+                "GOOGLE_API_KEY": "google-key",
+                "GEMINI_API_KEY": "gemini-key",
+                "XAI_API_KEY": "xai-key",
+                "ANTHROPIC_API_KEY": "anthropic-key",
+            },
+            clear=True,
+        ):
+            self.assertEqual(moat_ranker.load_api_keys(), expected)
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "openai-key",
+                "GEMINI_API_KEY": "gemini-key",
+                "XAI_API_KEY": "xai-key",
+                "ANTHROPIC_API_KEY": "anthropic-key",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                moat_ranker.load_api_keys(),
+                moat_ranker.ApiKeys(
+                    gpt="openai-key",
+                    gemini="gemini-key",
+                    grok="xai-key",
+                    claude="anthropic-key",
+                ),
+            )
+
+    def test_load_api_keys_reports_every_missing_key(self):
         with patch.dict(os.environ, {}, clear=True):
-            for invoke, model in (
-                (moat_ranker.invoke_gpt, "gpt-test"),
-                (moat_ranker.invoke_gemini, "gemini-test"),
-                (moat_ranker.invoke_grok, "grok-test"),
-                (moat_ranker.invoke_claude, "claude-test"),
+            with self.assertRaisesRegex(
+                moat_ranker.ModelInvocationError,
+                "OPENAI_API_KEY.*GOOGLE_API_KEY or GEMINI_API_KEY.*XAI_API_KEY.*ANTHROPIC_API_KEY",
             ):
-                with self.subTest(invoke=invoke.__name__):
-                    with self.assertRaises(moat_ranker.ModelInvocationError):
-                        await invoke(model, "Question", ())
+                moat_ranker.load_api_keys()
 
 
 class PromptBuilderTests(unittest.TestCase):
@@ -375,9 +365,10 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
         models = moat_ranker.Models(
             gpt="gpt-test",
             gemini="gemini-test",
-            grok="grok-test",
             claude="claude-test",
+            grok="grok-test",
         )
+        clients = make_panel_clients()
         history = (("Earlier question", "Earlier answer"),)
 
         with (
@@ -400,7 +391,9 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value="Grok answer"),
             ) as invoke_grok,
         ):
-            responses = await moat_ranker.query_panel("Question", models, history)
+            responses = await moat_ranker.query_panel(
+                "Question", models, clients, history
+            )
 
         self.assertEqual(
             responses,
@@ -411,18 +404,27 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
                 grok="Grok answer",
             ),
         )
-        invoke_gpt.assert_awaited_once_with("gpt-test", "Question", history)
-        invoke_gemini.assert_awaited_once_with("gemini-test", "Question", history)
-        invoke_claude.assert_awaited_once_with("claude-test", "Question", history)
-        invoke_grok.assert_awaited_once_with("grok-test", "Question", history)
+        invoke_gpt.assert_awaited_once_with(
+            clients.gpt, "gpt-test", "Question", history
+        )
+        invoke_gemini.assert_awaited_once_with(
+            clients.gemini, "gemini-test", "Question", history
+        )
+        invoke_claude.assert_awaited_once_with(
+            clients.claude, "claude-test", "Question", history
+        )
+        invoke_grok.assert_awaited_once_with(
+            clients.grok, "grok-test", "Question", history
+        )
 
     async def test_query_panel_propagates_provider_failures(self):
         models = moat_ranker.Models(
             gpt="gpt-test",
             gemini="gemini-test",
-            grok="grok-test",
             claude="claude-test",
+            grok="grok-test",
         )
+        clients = make_panel_clients()
         failure = moat_ranker.ModelInvocationError("Gemini unavailable")
 
         with (
@@ -444,15 +446,16 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(
                 moat_ranker.ModelInvocationError, "Gemini unavailable"
             ):
-                await moat_ranker.query_panel("Question", models)
+                await moat_ranker.query_panel("Question", models, clients)
 
     async def test_deliberate_does_not_synthesize_after_panel_failure(self):
         models = moat_ranker.Models(
             gpt="gpt-test",
             gemini="gemini-test",
-            grok="grok-test",
             claude="claude-test",
+            grok="grok-test",
         )
+        clients = make_panel_clients()
 
         with (
             patch.object(
@@ -467,7 +470,7 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(
                 moat_ranker.ModelInvocationError, "Grok unavailable"
             ):
-                await moat_ranker.deliberate("Question", models)
+                await moat_ranker.deliberate("Question", models, clients)
 
         synthesize.assert_not_awaited()
 
@@ -475,9 +478,10 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
         models = moat_ranker.Models(
             gpt="gpt-test",
             gemini="gemini-test",
-            grok="grok-test",
             claude="claude-test",
+            grok="grok-test",
         )
+        clients = make_panel_clients()
         history = (("Earlier question", "Earlier answer"),)
 
         with (
@@ -502,10 +506,10 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value="Grok panel answer"),
             ),
         ):
-            result = await moat_ranker.deliberate("Question", models, history)
+            result = await moat_ranker.deliberate("Question", models, clients, history)
 
         self.assertEqual(result, "Merged answer")
-        synthesis_prompt = invoke_gpt.await_args_list[1].args[1]
+        synthesis_prompt = invoke_gpt.await_args_list[1].args[2]
         self.assertEqual(
             synthesis_prompt,
             moat_ranker.build_synthesis_prompt(
@@ -518,12 +522,18 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
-        self.assertEqual(invoke_gpt.await_args_list[1].args[2], history)
+        self.assertEqual(invoke_gpt.await_args_list[1].args[3], history)
 
 
 class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
     async def test_process_batch_passes_first_synthesis_as_deeper_history(self):
-        models = moat_ranker.Models("gpt-test", "gemini-test", "grok-test", "claude-test")
+        models = moat_ranker.Models(
+            gpt="gpt-test",
+            gemini="gemini-test",
+            claude="claude-test",
+            grok="grok-test",
+        )
+        clients = make_panel_clients()
         batch = ["NVDA,NVIDIA Corporation", "NFLX,Netflix Inc."]
         initial_question = moat_ranker.build_moat_question(batch)
 
@@ -535,14 +545,19 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ) as deliberate,
             patch.object(moat_ranker, "progress"),
         ):
-            result = await moat_ranker.process_batch(batch, 1, models)
+            result = await moat_ranker.process_batch(batch, 1, models, clients)
 
         self.assertEqual(result, "Deeper synthesis")
         self.assertEqual(
             deliberate.await_args_list,
             [
-                call(initial_question, models),
-                call("think deeper", models, ((initial_question, "First synthesis"),)),
+                call(initial_question, models, clients),
+                call(
+                    "think deeper",
+                    models,
+                    clients,
+                    ((initial_question, "First synthesis"),),
+                ),
             ],
         )
 
@@ -554,7 +569,31 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             grok_model="grok-test",
             claude_model="claude-test",
         )
-        models = moat_ranker.Models("gpt-test", "gemini-test", "grok-test", "claude-test")
+        models = moat_ranker.Models(
+            gpt="gpt-test",
+            gemini="gemini-test",
+            claude="claude-test",
+            grok="grok-test",
+        )
+        api_keys = moat_ranker.ApiKeys(
+            gpt="openai-key",
+            gemini="gemini-key",
+            claude="anthropic-key",
+            grok="xai-key",
+        )
+        gpt_client = MagicMock(name="gpt_client")
+        gemini_client = MagicMock(name="gemini_client")
+        claude_client = MagicMock(name="claude_client")
+        grok_client = MagicMock(name="grok_client")
+        gpt_context = AsyncContextManager(gpt_client)
+        claude_context = AsyncContextManager(claude_client)
+        grok_context = AsyncContextManager(grok_client)
+        clients = moat_ranker.PanelClients(
+            gpt=gpt_client,
+            gemini=gemini_client,
+            claude=claude_client,
+            grok=grok_client,
+        )
         records = [
             "AAA,Alpha",
             "BBB,Beta",
@@ -566,9 +605,28 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(moat_ranker, "read_records", return_value=records),
+            patch.object(moat_ranker, "load_api_keys", return_value=api_keys),
+            patch.object(
+                moat_ranker,
+                "AsyncOpenAI",
+                return_value=gpt_context,
+            ) as openai_factory,
+            patch.object(
+                moat_ranker.anthropic,
+                "AsyncAnthropic",
+                return_value=claude_context,
+            ) as claude_factory,
+            patch.object(
+                moat_ranker,
+                "AsyncClient",
+                return_value=grok_context,
+            ) as grok_factory,
+            patch.object(
+                moat_ranker.genai, "Client", return_value=gemini_client
+            ) as gemini_factory,
             patch.object(
                 moat_ranker, "process_batch", new=AsyncMock(side_effect=batch_finals)
-            ),
+            ) as process_batch,
             patch.object(
                 moat_ranker, "deliberate", new=AsyncMock(return_value="Final ranking")
             ) as deliberate,
@@ -578,8 +636,22 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "Final ranking")
         deliberate.assert_awaited_once_with(
-            moat_ranker.build_ranking_question(batch_finals), models
+            moat_ranker.build_ranking_question(batch_finals), models, clients
         )
+        process_batch.assert_has_awaits(
+            [
+                call(records[:4], 1, models, clients),
+                call(records[4:], 2, models, clients),
+            ],
+            any_order=True,
+        )
+        openai_factory.assert_called_once_with(api_key="openai-key")
+        gemini_factory.assert_called_once_with(api_key="gemini-key")
+        claude_factory.assert_called_once_with(api_key="anthropic-key")
+        grok_factory.assert_called_once_with(api_key="xai-key")
+        self.assertTrue(gpt_context.entered and gpt_context.exited)
+        self.assertTrue(claude_context.entered and claude_context.exited)
+        self.assertTrue(grok_context.entered and grok_context.exited)
 
 
 class MainTests(unittest.TestCase):

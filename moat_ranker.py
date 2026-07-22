@@ -54,8 +54,24 @@ class ModelInvocationError(RuntimeError):
 class Models:
     gpt: str
     gemini: str
+    claude: str
+    grok: str
+
+
+@dataclass(frozen=True)
+class ApiKeys:
+    gpt: str
+    gemini: str
     grok: str
     claude: str
+
+
+@dataclass(frozen=True)
+class PanelClients:
+    gpt: AsyncOpenAI
+    gemini: genai.Client
+    grok: AsyncClient
+    claude: anthropic.AsyncAnthropic
 
 
 @dataclass(frozen=True)
@@ -71,11 +87,9 @@ def progress(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-async def invoke_gpt(model: str, question: str, history: Sequence[HistoryItem]) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise ModelInvocationError("OPENAI_API_KEY is required.")
-
+async def invoke_gpt(
+    client: AsyncOpenAI, model: str, question: str, history: Sequence[HistoryItem]
+) -> str:
     messages: List[Dict[str, str]] = []
     for prior_question, prior_answer in history:
         messages.append({"role": "user", "content": prior_question})
@@ -83,12 +97,11 @@ async def invoke_gpt(model: str, question: str, history: Sequence[HistoryItem]) 
     messages.append({"role": "user", "content": question})
 
     try:
-        async with AsyncOpenAI(api_key=api_key) as client:
-            response = await client.responses.create(
-                model=model,
-                input=messages,
-                reasoning={"effort": "xhigh"},
-            )
+        response = await client.responses.create(
+            model=model,
+            input=messages,
+            reasoning={"effort": "xhigh"},
+        )
         response_error = getattr(response, "error", None)
         if response_error is not None:
             code = getattr(response_error, "code", "") or ""
@@ -116,12 +129,8 @@ async def invoke_gpt(model: str, question: str, history: Sequence[HistoryItem]) 
 
 
 async def invoke_gemini(
-    model: str, question: str, history: Sequence[HistoryItem]
+    client: genai.Client, model: str, question: str, history: Sequence[HistoryItem]
 ) -> str:
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ModelInvocationError("GEMINI_API_KEY/GOOGLE_API_KEY is required.")
-
     try:
         contents = []
         for prior_question, prior_answer in history:
@@ -138,7 +147,6 @@ async def invoke_gemini(
                 thinking_level=types.ThinkingLevel.HIGH
             )
         )
-        client = genai.Client(api_key=api_key)
         response = await client.aio.models.generate_content(
             model=model, contents=contents, config=config
         )
@@ -174,19 +182,16 @@ async def invoke_gemini(
         raise ModelInvocationError(f"Error invoking Gemini API: {exc}") from exc
 
 
-async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem]) -> str:
-    api_key = os.getenv("XAI_API_KEY", "").strip()
-    if not api_key:
-        raise ModelInvocationError("XAI_API_KEY is required.")
-
+async def invoke_grok(
+    client: AsyncClient, model: str, question: str, history: Sequence[HistoryItem]
+) -> str:
     try:
-        async with AsyncClient(api_key=api_key) as client:
-            chat = client.chat.create(model=model, tools=[], reasoning_effort="high")
-            for prior_question, prior_answer in history:
-                chat.append(user(prior_question))
-                chat.append(assistant(prior_answer))
-            chat.append(user(question))
-            response = await chat.sample()
+        chat = client.chat.create(model=model, tools=[], reasoning_effort="high")
+        for prior_question, prior_answer in history:
+            chat.append(user(prior_question))
+            chat.append(assistant(prior_answer))
+        chat.append(user(question))
+        response = await chat.sample()
 
         response_error = getattr(response, "error", None)
         if response_error is not None:
@@ -212,12 +217,11 @@ async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem])
 
 
 async def invoke_claude(
-    model: str, question: str, history: Sequence[HistoryItem]
+    client: anthropic.AsyncAnthropic,
+    model: str,
+    question: str,
+    history: Sequence[HistoryItem],
 ) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise ModelInvocationError("ANTHROPIC_API_KEY is required.")
-
     messages = []
     for prior_question, prior_answer in history:
         messages.append({"role": "user", "content": prior_question})
@@ -225,14 +229,13 @@ async def invoke_claude(
     messages.append({"role": "user", "content": question})
 
     try:
-        async with anthropic.AsyncAnthropic(api_key=api_key) as client:
-            response = await client.messages.create(
-                model=model,
-                max_tokens=16384,
-                messages=messages,
-                thinking={"type": "adaptive"},
-                output_config={"effort": "xhigh"},
-            )
+        response = await client.messages.create(
+            model=model,
+            max_tokens=16384,
+            messages=messages,
+            thinking={"type": "adaptive"},
+            output_config={"effort": "xhigh"},
+        )
         if response.stop_reason != "end_turn":
             raise ModelInvocationError(
                 f"Claude response stopped with {response.stop_reason!r}."
@@ -285,48 +288,57 @@ def build_ranking_question(batch_finals: Sequence[str]) -> str:
 
 
 async def query_panel(
-    question: str, models: Models, history: Sequence[HistoryItem] = ()
+    question: str,
+    models: Models,
+    clients: PanelClients,
+    history: Sequence[HistoryItem] = (),
 ) -> PanelResponses:
     """Ask the full model panel concurrently."""
-    responses = await asyncio.gather(
-        invoke_gpt(models.gpt, question, history),
-        invoke_gemini(models.gemini, question, history),
-        invoke_claude(models.claude, question, history),
-        invoke_grok(models.grok, question, history),
+    gpt, gemini, claude, grok = await asyncio.gather(
+        invoke_gpt(clients.gpt, models.gpt, question, history),
+        invoke_gemini(clients.gemini, models.gemini, question, history),
+        invoke_claude(clients.claude, models.claude, question, history),
+        invoke_grok(clients.grok, models.grok, question, history),
     )
-    return PanelResponses(*responses)
+    return PanelResponses(gpt=gpt, gemini=gemini, claude=claude, grok=grok)
 
 
 async def synthesize(
     question: str,
     responses: PanelResponses,
     models: Models,
+    clients: PanelClients,
     history: Sequence[HistoryItem] = (),
 ) -> str:
     """Have GPT merge the panel's responses."""
     prompt = build_synthesis_prompt(question, responses)
-    return await invoke_gpt(models.gpt, prompt, history)
+    return await invoke_gpt(clients.gpt, models.gpt, prompt, history)
 
 
 async def deliberate(
-    question: str, models: Models, history: Sequence[HistoryItem] = ()
+    question: str,
+    models: Models,
+    clients: PanelClients,
+    history: Sequence[HistoryItem] = (),
 ) -> str:
     """Ask the panel, then return GPT's synthesis."""
-    responses = await query_panel(question, models, history)
-    return await synthesize(question, responses, models, history)
+    responses = await query_panel(question, models, clients, history)
+    return await synthesize(question, responses, models, clients, history)
 
 
-async def process_batch(batch: Sequence[str], batch_number: int, models: Models) -> str:
+async def process_batch(
+    batch: Sequence[str], batch_number: int, models: Models, clients: PanelClients
+) -> str:
     initial_question = build_moat_question(batch)
     progress(f"Batch {batch_number}: first-pass moat analysis")
-    first_synthesis = await deliberate(initial_question, models)
+    first_synthesis = await deliberate(initial_question, models, clients)
 
     # In pareja.py, the next turn's history contains the prior user question and
     # GPT's displayed synthesis. Give every model that same shared history.
     # The requested next user turn is deliberately just these two words.
     deeper_history = ((initial_question, first_synthesis),)
     progress(f"Batch {batch_number}: deeper analysis")
-    return await deliberate("think deeper", models, deeper_history)
+    return await deliberate("think deeper", models, clients, deeper_history)
 
 
 def read_records() -> List[str]:
@@ -362,6 +374,32 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_api_keys() -> ApiKeys:
+    gpt = os.getenv("OPENAI_API_KEY", "").strip()
+    gemini = (
+        os.getenv("GOOGLE_API_KEY", "").strip()
+        or os.getenv("GEMINI_API_KEY", "").strip()
+    )
+    grok = os.getenv("XAI_API_KEY", "").strip()
+    claude = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+    missing = []
+    if not gpt:
+        missing.append("OPENAI_API_KEY")
+    if not gemini:
+        missing.append("GOOGLE_API_KEY or GEMINI_API_KEY")
+    if not grok:
+        missing.append("XAI_API_KEY")
+    if not claude:
+        missing.append("ANTHROPIC_API_KEY")
+    if missing:
+        raise ModelInvocationError(
+            "Missing required environment variables: " + ", ".join(missing)
+        )
+
+    return ApiKeys(gpt=gpt, gemini=gemini, grok=grok, claude=claude)
+
+
 async def run(args: argparse.Namespace) -> str:
     if args.batch_size != 4:
         raise ValueError("batch size must be 4 for this workflow")
@@ -376,26 +414,41 @@ async def run(args: argparse.Namespace) -> str:
         grok=args.grok_model,
         claude=args.claude_model,
     )
+    api_keys = load_api_keys()
     batches = [
         records[index : index + args.batch_size]
         for index in range(0, len(records), args.batch_size)
     ]
     batch_semaphore = asyncio.Semaphore(4)
 
-    async def process_batch_with_limit(batch_number: int, batch: Sequence[str]) -> str:
-        async with batch_semaphore:
-            return await process_batch(batch, batch_number, models)
-
-    batch_finals = await asyncio.gather(
-        *(
-            process_batch_with_limit(batch_number, batch)
-            for batch_number, batch in enumerate(batches, start=1)
+    async with (
+        AsyncOpenAI(api_key=api_keys.gpt) as gpt_client,
+        anthropic.AsyncAnthropic(api_key=api_keys.claude) as claude_client,
+        AsyncClient(api_key=api_keys.grok) as grok_client,
+    ):
+        clients = PanelClients(
+            gpt=gpt_client,
+            gemini=genai.Client(api_key=api_keys.gemini),
+            grok=grok_client,
+            claude=claude_client,
         )
-    )
 
-    ranking_question = build_ranking_question(batch_finals)
-    progress("Final ranking: sending all batch findings to the model panel")
-    return await deliberate(ranking_question, models)
+        async def process_batch_with_limit(
+            batch_number: int, batch: Sequence[str]
+        ) -> str:
+            async with batch_semaphore:
+                return await process_batch(batch, batch_number, models, clients)
+
+        batch_finals = await asyncio.gather(
+            *(
+                process_batch_with_limit(batch_number, batch)
+                for batch_number, batch in enumerate(batches, start=1)
+            )
+        )
+
+        ranking_question = build_ranking_question(batch_finals)
+        progress("Final ranking: sending all batch findings to the model panel")
+        return await deliberate(ranking_question, models, clients)
 
 
 def main() -> int:
