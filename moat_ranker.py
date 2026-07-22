@@ -102,18 +102,19 @@ async def invoke_gpt(
             input=messages,
             reasoning={"effort": "xhigh"},
         )
-        if response.status != "completed":
-            raise ModelInvocationError(f"GPT response status {response.status!r}.")
-
+        response_status = response.status
         output_text = response.output_text
-        if not output_text.strip():
-            raise ModelInvocationError("GPT response contained no text.")
-
-        return output_text
-    except ModelInvocationError:
-        raise
+        output_is_blank = not output_text.strip()
     except Exception as exc:
         raise ModelInvocationError(f"Error invoking OpenAI API: {exc}") from exc
+
+    if response_status != "completed":
+        raise ModelInvocationError(f"GPT response status {response_status!r}.")
+
+    if output_is_blank:
+        raise ModelInvocationError("GPT response contained no text.")
+
+    return output_text
 
 
 async def invoke_gemini(
@@ -404,6 +405,7 @@ async def run(args: argparse.Namespace) -> str:
     ]
     batch_semaphore = asyncio.Semaphore(4)
 
+    # Leave max_retries unset: the OpenAI SDK retries transient failures twice.
     async with (
         AsyncOpenAI(api_key=api_keys.gpt) as gpt_client,
         anthropic.AsyncAnthropic(api_key=api_keys.claude) as claude_client,
