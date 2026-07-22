@@ -375,13 +375,12 @@ def recent_trading_dollars(
     return sum(notional for _, notional in recent_rows)
 
 
-def fetch_trading_dollar_fmp(
+def fetch_fmp_rows(
     market: MarketConfig,
     symbol: str,
-    description: str,
     from_date: str,
     api_key: str | None,
-) -> LiquidityResult:
+) -> list[dict[str, Any]]:
     fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     data = cached_get_json(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
@@ -391,12 +390,29 @@ def fetch_trading_dollar_fmp(
             *([] if market.fmp_legacy else [("symbol", fmp_symbol)]),
         ],
     )
-    rows = data.get("historical", []) if market.fmp_legacy else data
+    return data.get("historical", []) if market.fmp_legacy else data
 
-    if market.exclude_intraday_fmp_row and new_york_regular_session_in_progress():
-        today = today_for_market(market).isoformat()
-        rows = [row for row in rows if row["date"] != today]
 
+def complete_fmp_rows(
+    market: MarketConfig,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not (market.exclude_intraday_fmp_row and new_york_regular_session_in_progress()):
+        return rows
+
+    today = today_for_market(market).isoformat()
+    return [row for row in rows if row["date"] != today]
+
+
+def fetch_trading_dollar_fmp(
+    market: MarketConfig,
+    symbol: str,
+    description: str,
+    from_date: str,
+    api_key: str | None,
+) -> LiquidityResult:
+    rows = fetch_fmp_rows(market, symbol, from_date, api_key)
+    rows = complete_fmp_rows(market, rows)
     daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in rows]
     return LiquidityResult(
         symbol=symbol,
