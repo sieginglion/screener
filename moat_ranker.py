@@ -13,6 +13,12 @@ each model to "think deeper" with that synthesis as shared history, and
 synthesizes again.  It then asks all four models to rank the combined batch
 findings into four moat-width tiers and performs one final GPT synthesis.
 
+Failure behavior: fail as soon as a provider error is propagated. Do not
+synthesize a partial panel or emit a final ranking after a failed deliberation.
+
+Retry behavior: leave ``max_retries`` unset so the OpenAI SDK retries transient
+failures twice using its default policy.
+
 Required environment variables:
   OPENAI_API_KEY, GOOGLE_API_KEY (or GEMINI_API_KEY), XAI_API_KEY,
   ANTHROPIC_API_KEY
@@ -139,15 +145,6 @@ async def invoke_gemini(
         response = await client.aio.models.generate_content(
             model=model, contents=contents, config=config
         )
-
-        prompt_feedback = response.prompt_feedback
-        block_reason = (
-            prompt_feedback.block_reason if prompt_feedback is not None else None
-        )
-        if block_reason:
-            raise ModelInvocationError(
-                f"Gemini prompt was blocked ({block_reason.value})."
-            )
 
         candidates = response.candidates
         if not candidates:
@@ -405,7 +402,6 @@ async def run(args: argparse.Namespace) -> str:
     ]
     batch_semaphore = asyncio.Semaphore(4)
 
-    # Leave max_retries unset: the OpenAI SDK retries transient failures twice.
     async with (
         AsyncOpenAI(api_key=api_keys.gpt) as gpt_client,
         anthropic.AsyncAnthropic(api_key=api_keys.claude) as claude_client,

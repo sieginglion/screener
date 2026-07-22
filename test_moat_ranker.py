@@ -139,26 +139,6 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "Gemini result")
 
-    async def test_gemini_accepts_unblocked_prompt_feedback(self):
-        response = types.SimpleNamespace(
-            prompt_feedback=types.SimpleNamespace(block_reason=None),
-            candidates=[
-                types.SimpleNamespace(
-                    finish_reason=moat_ranker.types.FinishReason.STOP,
-                    finish_message=None,
-                )
-            ],
-            text="Gemini result",
-        )
-        client = MagicMock()
-        client.aio.models.generate_content = AsyncMock(return_value=response)
-
-        result = await moat_ranker.invoke_gemini(
-            client, "gemini-test", "Question", ()
-        )
-
-        self.assertEqual(result, "Gemini result")
-
     async def test_grok_returns_stripped_response_text(self):
         response = types.SimpleNamespace(
             finish_reason="REASON_STOP",
@@ -251,7 +231,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                     candidates=None,
                     text=None,
                 ),
-                "prompt was blocked",
+                "contained no candidates",
             ),
             (
                 types.SimpleNamespace(
