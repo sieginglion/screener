@@ -49,6 +49,8 @@ MODEL_GPT_BASE = "gpt-5.6-terra"
 MODEL_GEMINI = "gemini-3.6-flash"
 MODEL_GROK_BASE = "grok-4.5"
 MODEL_CLAUDE = "claude-opus-4-8"
+BATCH_SIZE = 4
+MAX_CONCURRENT_BATCHES = 4
 
 HistoryItem = Tuple[str, str]
 
@@ -322,6 +324,32 @@ async def process_batch(
     return await deliberate("think deeper", models, clients, deeper_history)
 
 
+async def rank_records(
+    records: Sequence[str], models: Models, clients: PanelClients
+) -> str:
+    """Process batches and produce the final panel ranking."""
+    batches = [
+        records[index : index + BATCH_SIZE]
+        for index in range(0, len(records), BATCH_SIZE)
+    ]
+    batch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_BATCHES)
+
+    async def process_batch_with_limit(batch_number: int, batch: Sequence[str]) -> str:
+        async with batch_semaphore:
+            return await process_batch(batch, batch_number, models, clients)
+
+    batch_finals = await asyncio.gather(
+        *(
+            process_batch_with_limit(batch_number, batch)
+            for batch_number, batch in enumerate(batches, start=1)
+        )
+    )
+
+    ranking_question = build_ranking_question(batch_finals)
+    progress("Final ranking: sending all batch findings to the model panel")
+    return await deliberate(ranking_question, models, clients)
+
+
 def read_records() -> List[str]:
     records = []
     for line_number, raw_line in enumerate(sys.stdin, start=1):
@@ -344,9 +372,6 @@ def read_records() -> List[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Rank stock moats from CSV records supplied on standard input."
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=4, help="Records per batch (default: 4)."
     )
     parser.add_argument("--gpt-model", default=MODEL_GPT_BASE)
     parser.add_argument("--gemini-model", default=MODEL_GEMINI)
@@ -382,9 +407,6 @@ def load_api_keys() -> ApiKeys:
 
 
 async def run(args: argparse.Namespace) -> str:
-    if args.batch_size != 4:
-        raise ValueError("batch size must be 4 for this workflow")
-
     records = read_records()
     if not records:
         raise ValueError("No non-empty CSV records were supplied on standard input.")
@@ -396,11 +418,6 @@ async def run(args: argparse.Namespace) -> str:
         claude=args.claude_model,
     )
     api_keys = load_api_keys()
-    batches = [
-        records[index : index + args.batch_size]
-        for index in range(0, len(records), args.batch_size)
-    ]
-    batch_semaphore = asyncio.Semaphore(4)
 
     async with (
         AsyncOpenAI(api_key=api_keys.gpt) as gpt_client,
@@ -413,23 +430,7 @@ async def run(args: argparse.Namespace) -> str:
             grok=grok_client,
             claude=claude_client,
         )
-
-        async def process_batch_with_limit(
-            batch_number: int, batch: Sequence[str]
-        ) -> str:
-            async with batch_semaphore:
-                return await process_batch(batch, batch_number, models, clients)
-
-        batch_finals = await asyncio.gather(
-            *(
-                process_batch_with_limit(batch_number, batch)
-                for batch_number, batch in enumerate(batches, start=1)
-            )
-        )
-
-        ranking_question = build_ranking_question(batch_finals)
-        progress("Final ranking: sending all batch findings to the model panel")
-        return await deliberate(ranking_question, models, clients)
+        return await rank_records(records, models, clients)
 
 
 def main() -> int:
