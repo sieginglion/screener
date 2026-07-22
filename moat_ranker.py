@@ -102,16 +102,6 @@ async def invoke_gpt(
             input=messages,
             reasoning={"effort": "xhigh"},
         )
-        if response.error is not None:
-            code = response.error.code or ""
-            message = response.error.message or "Unknown model failure."
-            code_text = f" [{code}]" if code else ""
-            raise ModelInvocationError(f"GPT model response{code_text}: {message}")
-
-        if response.status == "incomplete":
-            details = response.incomplete_details
-            reason = details.reason if details is not None else "unknown reason"
-            raise ModelInvocationError(f"GPT incomplete response ({reason}).")
         if response.status != "completed":
             raise ModelInvocationError(f"GPT response status {response.status!r}.")
 

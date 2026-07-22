@@ -45,7 +45,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "GPT result")
 
-    async def test_gpt_rejects_failed_and_malformed_responses(self):
+    async def test_gpt_rejects_non_completed_and_malformed_responses(self):
         responses = [
             (
                 types.SimpleNamespace(
@@ -55,7 +55,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                     status="failed",
                     output_text="",
                 ),
-                "Model failure",
+                "GPT response status 'failed'",
             ),
             (
                 types.SimpleNamespace(
@@ -86,12 +86,9 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                 types.SimpleNamespace(
                     error=None,
                     status="incomplete",
-                    incomplete_details=types.SimpleNamespace(
-                        reason="max_output_tokens"
-                    ),
                     output_text="Partial GPT result",
                 ),
-                "max_output_tokens",
+                "GPT response status 'incomplete'",
             ),
             (
                 types.SimpleNamespace(
