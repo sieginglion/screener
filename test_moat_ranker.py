@@ -221,6 +221,67 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "Claude result")
 
+    async def test_claude_wraps_api_exceptions(self):
+        client = MagicMock()
+        error = RuntimeError("connection failed")
+        client.messages.create = AsyncMock(side_effect=error)
+
+        with self.assertRaisesRegex(
+            moat_ranker.ModelInvocationError,
+            "Error invoking Anthropic API: connection failed",
+        ) as raised:
+            await moat_ranker.invoke_claude(client, "claude-test", "Question", ())
+
+        self.assertIs(raised.exception.__cause__, error)
+
+    async def test_claude_rejects_incomplete_or_textless_responses(self):
+        responses = [
+            (
+                types.SimpleNamespace(
+                    stop_reason="max_tokens",
+                    content=[
+                        types.SimpleNamespace(type="text", text="Partial result")
+                    ],
+                ),
+                "Claude response stopped with 'max_tokens'",
+            ),
+            (
+                types.SimpleNamespace(
+                    stop_reason="refusal",
+                    content=[types.SimpleNamespace(type="text", text="Refusal")],
+                ),
+                "Claude response stopped with 'refusal'",
+            ),
+            (
+                types.SimpleNamespace(
+                    stop_reason="end_turn",
+                    content=[types.SimpleNamespace(type="thinking")],
+                ),
+                "Claude response contained no text",
+            ),
+            (
+                types.SimpleNamespace(
+                    stop_reason="end_turn",
+                    content=[types.SimpleNamespace(type="text", text="  ")],
+                ),
+                "Claude response contained no text",
+            ),
+        ]
+        client = MagicMock()
+        client.messages.create = AsyncMock(
+            side_effect=[response for response, _ in responses]
+        )
+
+        for _, expected_error in responses:
+            with self.subTest(expected_error=expected_error):
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError, expected_error
+                ) as raised:
+                    await moat_ranker.invoke_claude(
+                        client, "claude-test", "Question", ()
+                    )
+                self.assertNotIn("Error invoking Anthropic API", str(raised.exception))
+
     async def test_gemini_rejects_api_and_response_failures(self):
         responses = [
             (

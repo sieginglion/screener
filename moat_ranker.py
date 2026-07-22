@@ -218,20 +218,19 @@ async def invoke_claude(
             thinking={"type": "adaptive"},
             output_config={"effort": "xhigh"},
         )
-        if response.stop_reason != "end_turn":
-            raise ModelInvocationError(
-                f"Claude response stopped with {response.stop_reason!r}."
-            )
-        text = "\n".join(
-            block.text for block in response.content if block.type == "text"
-        ).strip()
-        if not text:
-            raise ModelInvocationError("Claude response contained no text.")
-        return text
-    except ModelInvocationError:
-        raise
     except Exception as exc:
         raise ModelInvocationError(f"Error invoking Anthropic API: {exc}") from exc
+
+    if response.stop_reason != "end_turn":
+        raise ModelInvocationError(
+            f"Claude response stopped with {response.stop_reason!r}."
+        )
+    text = "\n".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
+    if not text:
+        raise ModelInvocationError("Claude response contained no text.")
+    return text
 
 
 def build_moat_question(batch: Sequence[str]) -> str:
