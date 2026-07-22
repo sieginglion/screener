@@ -39,7 +39,7 @@ from xai_sdk.chat import assistant, user
 
 # These are the model variants used by pareja.py.
 MODEL_GPT_BASE = "gpt-5.6-terra"
-MODEL_GEMINI = "gemini-3.1-pro-preview"
+MODEL_GEMINI = "gemini-3.6-flash"
 MODEL_GROK_BASE = "grok-4.5"
 MODEL_CLAUDE = "claude-opus-4-8"
 
@@ -48,6 +48,14 @@ HistoryItem = Tuple[str, str]
 
 class GPTInvocationError(RuntimeError):
     """Raised when GPT cannot provide a usable response for a required step."""
+
+
+class GeminiInvocationError(RuntimeError):
+    """Raised when Gemini cannot provide a usable response for a required step."""
+
+
+class GrokInvocationError(RuntimeError):
+    """Raised when Grok cannot provide a usable response for a required step."""
 
 
 class ClaudeInvocationError(RuntimeError):
@@ -116,36 +124,64 @@ async def invoke_gemini(
 ) -> str:
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return "Error: GEMINI_API_KEY/GOOGLE_API_KEY not found."
-
-    contents = []
-    for prior_question, prior_answer in history:
-        contents.append(
-            types.Content(role="user", parts=[types.Part(text=prior_question)])
-        )
-        contents.append(
-            types.Content(role="model", parts=[types.Part(text=prior_answer)])
-        )
-    contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
-
-    config = types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
-    )
+        raise GeminiInvocationError("GEMINI_API_KEY/GOOGLE_API_KEY is required.")
 
     try:
+        contents = []
+        for prior_question, prior_answer in history:
+            contents.append(
+                types.Content(role="user", parts=[types.Part(text=prior_question)])
+            )
+            contents.append(
+                types.Content(role="model", parts=[types.Part(text=prior_answer)])
+            )
+        contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
+
+        config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.HIGH
+            )
+        )
         client = genai.Client(api_key=api_key)
         response = await client.aio.models.generate_content(
             model=model, contents=contents, config=config
         )
-        return response.text
+
+        prompt_feedback = getattr(response, "prompt_feedback", None)
+        block_reason = getattr(prompt_feedback, "block_reason", None)
+        if block_reason:
+            reason = getattr(block_reason, "value", block_reason)
+            raise GeminiInvocationError(f"Gemini prompt was blocked ({reason}).")
+
+        candidates = getattr(response, "candidates", None)
+        if not candidates:
+            raise GeminiInvocationError("Gemini response contained no candidates.")
+
+        candidate = candidates[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        finish_reason_value = getattr(finish_reason, "value", finish_reason)
+        if finish_reason_value != "STOP":
+            reason = finish_reason_value or "unknown reason"
+            detail = getattr(candidate, "finish_message", None)
+            detail_text = f": {detail}" if detail else ""
+            raise GeminiInvocationError(
+                f"Gemini response stopped with {reason!r}{detail_text}"
+            )
+
+        output_text = getattr(response, "text", None)
+        if not isinstance(output_text, str) or not output_text.strip():
+            raise GeminiInvocationError("Gemini response contained no text.")
+        return output_text
+    except GeminiInvocationError:
+        raise
     except Exception as exc:
-        return f"Error invoking Gemini: {exc}"
+        raise GeminiInvocationError(f"Error invoking Gemini API: {exc}") from exc
 
 
 async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem]) -> str:
     api_key = os.getenv("XAI_API_KEY", "").strip()
     if not api_key:
-        return "Error: XAI_API_KEY not found."
+        raise GrokInvocationError("XAI_API_KEY is required.")
 
     try:
         async with AsyncClient(api_key=api_key) as client:
@@ -155,10 +191,28 @@ async def invoke_grok(model: str, question: str, history: Sequence[HistoryItem])
                 chat.append(assistant(prior_answer))
             chat.append(user(question))
             response = await chat.sample()
-        content = response.content.strip() if response.content else ""
-        return content
+
+        response_error = getattr(response, "error", None)
+        if response_error is not None:
+            code = getattr(response_error, "code", "") or ""
+            message = getattr(response_error, "message", "") or "Unknown model failure."
+            code_text = f" [{code}]" if code else ""
+            raise GrokInvocationError(f"Grok model response{code_text}: {message}")
+
+        finish_reason = getattr(response, "finish_reason", None)
+        if finish_reason not in {"REASON_STOP", "STOP", "stop"}:
+            raise GrokInvocationError(
+                f"Grok response stopped with {finish_reason or 'unknown reason'!r}."
+            )
+
+        content = getattr(response, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            raise GrokInvocationError("Grok response contained no text.")
+        return content.strip()
+    except GrokInvocationError:
+        raise
     except Exception as exc:
-        return f"Error invoking Grok: {exc}"
+        raise GrokInvocationError(f"Error invoking xAI API: {exc}") from exc
 
 
 async def invoke_claude(
@@ -354,7 +408,14 @@ def main() -> int:
     args = parse_args()
     try:
         print(asyncio.run(run(args)))
-    except (ValueError, csv.Error, GPTInvocationError, ClaudeInvocationError) as exc:
+    except (
+        ValueError,
+        csv.Error,
+        GPTInvocationError,
+        GeminiInvocationError,
+        GrokInvocationError,
+        ClaudeInvocationError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
     return 0
