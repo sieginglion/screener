@@ -45,6 +45,83 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "GPT result")
 
+    async def test_gpt_rejects_failed_and_malformed_responses(self):
+        responses = [
+            (
+                types.SimpleNamespace(
+                    error=types.SimpleNamespace(
+                        code="server_error", message="Model failure"
+                    ),
+                    status="failed",
+                    output_text="",
+                ),
+                "Model failure",
+            ),
+            (
+                types.SimpleNamespace(
+                    error=None,
+                    status="failed",
+                    output_text="",
+                ),
+                "GPT response status 'failed'",
+            ),
+            (
+                types.SimpleNamespace(error=None, output_text="GPT result"),
+                "Error invoking OpenAI API",
+            ),
+        ]
+
+        for response, expected_error in responses:
+            with self.subTest(response=response):
+                client = MagicMock()
+                client.responses.create = AsyncMock(return_value=response)
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError, expected_error
+                ):
+                    await moat_ranker.invoke_gpt(client, "gpt-test", "Question", ())
+
+    async def test_gpt_rejects_incomplete_and_blank_responses(self):
+        responses = [
+            (
+                types.SimpleNamespace(
+                    error=None,
+                    status="incomplete",
+                    incomplete_details=types.SimpleNamespace(
+                        reason="max_output_tokens"
+                    ),
+                    output_text="Partial GPT result",
+                ),
+                "max_output_tokens",
+            ),
+            (
+                types.SimpleNamespace(
+                    error=None,
+                    status="completed",
+                    incomplete_details=None,
+                    output_text="  ",
+                ),
+                "GPT response contained no text",
+            ),
+        ]
+
+        for response, expected_error in responses:
+            with self.subTest(response=response):
+                client = MagicMock()
+                client.responses.create = AsyncMock(return_value=response)
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError, expected_error
+                ):
+                    await moat_ranker.invoke_gpt(client, "gpt-test", "Question", ())
+
+    async def test_gpt_wraps_api_exceptions(self):
+        client = MagicMock()
+        client.responses.create = AsyncMock(side_effect=RuntimeError("connection failed"))
+
+        with self.assertRaisesRegex(
+            moat_ranker.ModelInvocationError, "connection failed"
+        ):
+            await moat_ranker.invoke_gpt(client, "gpt-test", "Question", ())
+
     async def test_gemini_returns_response_text(self):
         response = types.SimpleNamespace(
             prompt_feedback=None,
@@ -65,9 +142,28 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "Gemini result")
 
+    async def test_gemini_accepts_unblocked_prompt_feedback(self):
+        response = types.SimpleNamespace(
+            prompt_feedback=types.SimpleNamespace(block_reason=None),
+            candidates=[
+                types.SimpleNamespace(
+                    finish_reason=moat_ranker.types.FinishReason.STOP,
+                    finish_message=None,
+                )
+            ],
+            text="Gemini result",
+        )
+        client = MagicMock()
+        client.aio.models.generate_content = AsyncMock(return_value=response)
+
+        result = await moat_ranker.invoke_gemini(
+            client, "gemini-test", "Question", ()
+        )
+
+        self.assertEqual(result, "Gemini result")
+
     async def test_grok_returns_stripped_response_text(self):
         response = types.SimpleNamespace(
-            error=None,
             finish_reason="REASON_STOP",
             content="  Grok result  ",
         )
@@ -80,37 +176,25 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "Grok result")
 
-    async def test_grok_rejects_api_and_response_failures(self):
+    async def test_grok_rejects_unsuccessful_response_results(self):
         responses = [
             (
                 types.SimpleNamespace(
-                    error=types.SimpleNamespace(
-                        code="server_error", message="Model failure"
-                    ),
-                    finish_reason="REASON_STOP",
-                    content="Grok result",
-                ),
-                "Model failure",
-            ),
-            (
-                types.SimpleNamespace(
-                    error=None,
                     finish_reason="REASON_MAX_LEN",
                     content="Partial Grok result",
                 ),
                 "stopped with 'REASON_MAX_LEN'",
             ),
             (
-                types.SimpleNamespace(
-                    error=None,
-                    finish_reason="REASON_STOP",
-                    content=None,
-                ),
-                "contained no text",
+                types.SimpleNamespace(finish_reason="STOP", content="Grok result"),
+                "stopped with 'STOP'",
+            ),
+            (
+                types.SimpleNamespace(finish_reason="stop", content="Grok result"),
+                "stopped with 'stop'",
             ),
             (
                 types.SimpleNamespace(
-                    error=None,
                     finish_reason="REASON_STOP",
                     content="  ",
                 ),
@@ -192,6 +276,19 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                     text="Partial Gemini result",
                 ),
                 "stopped with 'MAX_TOKENS'",
+            ),
+            (
+                types.SimpleNamespace(
+                    prompt_feedback=None,
+                    candidates=[
+                        types.SimpleNamespace(
+                            finish_reason=None,
+                            finish_message=None,
+                        )
+                    ],
+                    text="Partial Gemini result",
+                ),
+                "stopped with 'unknown reason'",
             ),
             (
                 types.SimpleNamespace(

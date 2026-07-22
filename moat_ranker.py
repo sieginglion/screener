@@ -102,22 +102,20 @@ async def invoke_gpt(
             input=messages,
             reasoning={"effort": "xhigh"},
         )
-        response_error = getattr(response, "error", None)
-        if response_error is not None:
-            code = getattr(response_error, "code", "") or ""
-            message = getattr(response_error, "message", "") or "Unknown model failure."
+        if response.error is not None:
+            code = response.error.code or ""
+            message = response.error.message or "Unknown model failure."
             code_text = f" [{code}]" if code else ""
             raise ModelInvocationError(f"GPT model response{code_text}: {message}")
 
-        status = getattr(response, "status", None)
-        if status == "incomplete":
-            details = getattr(response, "incomplete_details", None)
-            reason = getattr(details, "reason", None) or "unknown reason"
+        if response.status == "incomplete":
+            details = response.incomplete_details
+            reason = details.reason if details is not None else "unknown reason"
             raise ModelInvocationError(f"GPT incomplete response ({reason}).")
-        if status and status != "completed":
-            raise ModelInvocationError(f"GPT response status {status!r}.")
+        if response.status != "completed":
+            raise ModelInvocationError(f"GPT response status {response.status!r}.")
 
-        output_text = getattr(response, "output_text", "") or ""
+        output_text = response.output_text
         if not output_text.strip():
             raise ModelInvocationError("GPT response contained no text.")
 
@@ -151,29 +149,33 @@ async def invoke_gemini(
             model=model, contents=contents, config=config
         )
 
-        prompt_feedback = getattr(response, "prompt_feedback", None)
-        block_reason = getattr(prompt_feedback, "block_reason", None)
+        prompt_feedback = response.prompt_feedback
+        block_reason = (
+            prompt_feedback.block_reason if prompt_feedback is not None else None
+        )
         if block_reason:
-            reason = getattr(block_reason, "value", block_reason)
-            raise ModelInvocationError(f"Gemini prompt was blocked ({reason}).")
+            raise ModelInvocationError(
+                f"Gemini prompt was blocked ({block_reason.value})."
+            )
 
-        candidates = getattr(response, "candidates", None)
+        candidates = response.candidates
         if not candidates:
             raise ModelInvocationError("Gemini response contained no candidates.")
 
         candidate = candidates[0]
-        finish_reason = getattr(candidate, "finish_reason", None)
-        finish_reason_value = getattr(finish_reason, "value", finish_reason)
-        if finish_reason_value != "STOP":
-            reason = finish_reason_value or "unknown reason"
-            detail = getattr(candidate, "finish_message", None)
+        finish_reason = candidate.finish_reason
+        if finish_reason != types.FinishReason.STOP:
+            reason = (
+                finish_reason.value if finish_reason is not None else "unknown reason"
+            )
+            detail = candidate.finish_message
             detail_text = f": {detail}" if detail else ""
             raise ModelInvocationError(
                 f"Gemini response stopped with {reason!r}{detail_text}"
             )
 
-        output_text = getattr(response, "text", None)
-        if not isinstance(output_text, str) or not output_text.strip():
+        output_text = response.text
+        if not output_text or not output_text.strip():
             raise ModelInvocationError("Gemini response contained no text.")
         return output_text
     except ModelInvocationError:
@@ -193,21 +195,12 @@ async def invoke_grok(
         chat.append(user(question))
         response = await chat.sample()
 
-        response_error = getattr(response, "error", None)
-        if response_error is not None:
-            code = getattr(response_error, "code", "") or ""
-            message = getattr(response_error, "message", "") or "Unknown model failure."
-            code_text = f" [{code}]" if code else ""
-            raise ModelInvocationError(f"Grok model response{code_text}: {message}")
+        finish_reason = response.finish_reason
+        if finish_reason != "REASON_STOP":
+            raise ModelInvocationError(f"Grok response stopped with {finish_reason!r}.")
 
-        finish_reason = getattr(response, "finish_reason", None)
-        if finish_reason not in {"REASON_STOP", "STOP", "stop"}:
-            raise ModelInvocationError(
-                f"Grok response stopped with {finish_reason or 'unknown reason'!r}."
-            )
-
-        content = getattr(response, "content", None)
-        if not isinstance(content, str) or not content.strip():
+        content = response.content
+        if not content.strip():
             raise ModelInvocationError("Grok response contained no text.")
         return content.strip()
     except ModelInvocationError:
