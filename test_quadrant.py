@@ -91,7 +91,9 @@ class FetchScoreTests(unittest.TestCase):
 
     def test_propagates_http_errors(self):
         url = f"{quadrant.SCORING_BASE_URL}/growth"
-        response = quadrant.httpx.Response(500, request=quadrant.httpx.Request("GET", url))
+        response = quadrant.httpx.Response(
+            500, request=quadrant.httpx.Request("GET", url)
+        )
 
         with patch.object(quadrant.httpx, "get", return_value=response):
             with self.assertRaises(quadrant.httpx.HTTPStatusError):
@@ -325,7 +327,9 @@ class LoadTopCandidatesTests(unittest.TestCase):
             )
 
         with (
-            patch("quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)),
+            patch(
+                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
+            ),
             patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks),
             patch(
                 "quadrant.fetch_trading_dollar_fmp",
@@ -539,12 +543,8 @@ class GrowthScoringTests(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                quadrant.Candidate(
-                    symbol="A", description="Alpha", growth_score=1
-                ),
-                quadrant.Candidate(
-                    symbol="B", description="Beta", growth_score=1
-                ),
+                quadrant.Candidate(symbol="A", description="Alpha", growth_score=1),
+                quadrant.Candidate(symbol="B", description="Beta", growth_score=1),
             ],
         )
 

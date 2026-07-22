@@ -25,7 +25,7 @@ Required environment variables:
   ANTHROPIC_API_KEY
 
 Install dependencies with:
-  pip install anthropic google-genai openai python-dotenv xai-sdk
+  uv sync
 """
 
 import argparse
@@ -241,18 +241,18 @@ def build_moat_question(batch: Sequence[str]) -> str:
 
 def build_synthesis_prompt(question: str, responses: PanelResponses) -> str:
     response_blocks = [
-        f'''<response model="gpt">
+        f"""<response model="gpt">
 {responses.gpt}
-</response>''',
-        f'''<response model="gemini">
+</response>""",
+        f"""<response model="gemini">
 {responses.gemini}
-</response>''',
-        f'''<response model="claude">
+</response>""",
+        f"""<response model="claude">
 {responses.claude}
-</response>''',
-        f'''<response model="grok">
+</response>""",
+        f"""<response model="grok">
 {responses.grok}
-</response>''',
+</response>""",
     ]
     return f'''<prompt>
 {question}

@@ -112,7 +112,9 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_gpt_wraps_api_exceptions(self):
         client = MagicMock()
-        client.responses.create = AsyncMock(side_effect=RuntimeError("connection failed"))
+        client.responses.create = AsyncMock(
+            side_effect=RuntimeError("connection failed")
+        )
 
         with self.assertRaisesRegex(
             moat_ranker.ModelInvocationError, "connection failed"
@@ -133,9 +135,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.aio.models.generate_content = AsyncMock(return_value=response)
 
-        result = await moat_ranker.invoke_gemini(
-            client, "gemini-test", "Question", ()
-        )
+        result = await moat_ranker.invoke_gemini(client, "gemini-test", "Question", ())
 
         self.assertEqual(result, "Gemini result")
 
@@ -193,9 +193,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
     async def test_grok_wraps_setup_and_api_exceptions(self):
         client = MagicMock()
         client.chat.create.side_effect = RuntimeError("invalid model")
-        with self.assertRaisesRegex(
-            moat_ranker.ModelInvocationError, "invalid model"
-        ):
+        with self.assertRaisesRegex(moat_ranker.ModelInvocationError, "invalid model"):
             await moat_ranker.invoke_grok(client, "grok-test", "Question", ())
 
         chat = MagicMock()
@@ -215,9 +213,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
 
-        result = await moat_ranker.invoke_claude(
-            client, "claude-test", "Question", ()
-        )
+        result = await moat_ranker.invoke_claude(client, "claude-test", "Question", ())
 
         self.assertEqual(result, "Claude result")
 
@@ -239,9 +235,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             (
                 types.SimpleNamespace(
                     stop_reason="max_tokens",
-                    content=[
-                        types.SimpleNamespace(type="text", text="Partial result")
-                    ],
+                    content=[types.SimpleNamespace(type="text", text="Partial result")],
                 ),
                 "Claude response stopped with 'max_tokens'",
             ),
@@ -464,7 +458,7 @@ class PromptBuilderTests(unittest.TestCase):
 
         self.assertEqual(
             prompt,
-            '''<prompt>
+            """<prompt>
 Question
 </prompt>
 <response model="gpt">
@@ -480,7 +474,7 @@ Claude answer
 Grok answer
 </response>
 Merge the responses into a coherent one. List any major conflicts.
-''',
+""",
         )
 
     def test_build_ranking_question(self):

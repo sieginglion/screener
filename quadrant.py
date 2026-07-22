@@ -11,6 +11,9 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import httpx
+from diskcache import Cache
+from dotenv import load_dotenv
+
 from config import (
     BTC_GROWTH_MULTIPLIER,
     CANDIDATE_POOL_MULTIPLIER,
@@ -23,8 +26,6 @@ from config import (
     TV_SORT_WINDOW,
     Q,
 )
-from diskcache import Cache
-from dotenv import load_dotenv
 
 SCORING_BASE_URL = "http://localhost:8080"
 FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"

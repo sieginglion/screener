@@ -2,4 +2,4 @@
 
 set -euo pipefail
 
-. ./.venv/bin/activate; ./quadrant.py
+uv run python quadrant.py

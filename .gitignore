@@ -1,7 +1,9 @@
 __pycache__/
+.venv/
 .cache/
 .env
 *.bak
 *.csv
 *.md
+!README.md
 config.py

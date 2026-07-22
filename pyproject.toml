@@ -1,0 +1,28 @@
+[project]
+name = "screener"
+version = "0.1.0"
+description = "Stock screener and moat-ranking scripts"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "anthropic",
+    "diskcache",
+    "finmind",
+    "google-genai",
+    "httpx",
+    "openai",
+    "python-dotenv",
+    "xai-sdk",
+]
+
+[dependency-groups]
+dev = [
+    "black",
+    "isort",
+]
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+py_version = 312
