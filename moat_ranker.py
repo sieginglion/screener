@@ -16,8 +16,9 @@ findings into four moat-width tiers and performs one final GPT synthesis.
 Failure behavior: fail as soon as a provider error is propagated. Do not
 synthesize a partial panel or emit a final ranking after a failed deliberation.
 
-Retry behavior: leave ``max_retries`` unset so the OpenAI SDK retries transient
-failures twice using its default policy.
+Retry behavior: use each provider SDK's default retry policy; do not add
+application-level retries.  In particular, leave OpenAI's ``max_retries``
+unset and do not override xAI's default gRPC channel options.
 
 Required environment variables:
   OPENAI_API_KEY, GOOGLE_API_KEY (or GEMINI_API_KEY), XAI_API_KEY,
