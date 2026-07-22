@@ -2,7 +2,7 @@
 name = "screener"
 version = "0.1.0"
 description = "Stock screener and moat-ranking scripts"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic",
     "diskcache",
@@ -16,13 +16,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "black",
-    "isort",
+    "ruff>=0.15.22",
+    "ty>=0.0.62",
 ]
 
-[tool.black]
-target-version = ["py312"]
-
-[tool.isort]
-profile = "black"
-py_version = 312
+[tool.ruff]
+target-version = "py312"

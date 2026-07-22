@@ -354,8 +354,8 @@ class LoadTopCandidatesTests(unittest.TestCase):
         finmind_data = types.ModuleType("FinMind.data")
         loader = Mock()
         data_loader = Mock(return_value=loader)
-        finmind.data = finmind_data
-        finmind_data.DataLoader = data_loader
+        setattr(finmind, "data", finmind_data)
+        setattr(finmind_data, "DataLoader", data_loader)
 
         def trading_dollars(symbol, description, start, end):
             return quadrant.LiquidityResult(
@@ -446,7 +446,9 @@ class GrowthScoringTests(unittest.TestCase):
 
         with patch("quadrant.fetch_score", side_effect=[2, [3]]):
             growth_candidate = quadrant.score_growth(candidate)
+            assert growth_candidate is not None
             scored_candidate = quadrant.score_valuation(growth_candidate)
+            assert scored_candidate is not None
 
         self.assertEqual(
             scored_candidate,
@@ -524,6 +526,8 @@ class GrowthScoringTests(unittest.TestCase):
             bitcoin_result = quadrant.score_growth(bitcoin)
             stock_result = quadrant.score_growth(stock)
 
+        assert bitcoin_result is not None
+        assert stock_result is not None
         self.assertEqual(bitcoin_result.growth_score, 6)
         self.assertEqual(stock_result.growth_score, 3)
 

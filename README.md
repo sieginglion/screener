@@ -87,13 +87,19 @@ uv run python clear_ticker_cache.py --liquidity
 uv run --locked python -m unittest discover -v
 ```
 
-## Formatting
+## Code quality
 
-Check import ordering before Black formatting, or apply them in that same order:
+Check linting, formatting, and types with:
 
 ```sh
-uv run isort --check-only .
-uv run black --check .
-uv run isort .
-uv run black .
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked ty check
+```
+
+Apply Ruff's safe lint fixes and formatter with:
+
+```sh
+uv run ruff check --fix .
+uv run ruff format .
 ```

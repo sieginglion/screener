@@ -34,13 +34,15 @@ import csv
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Sequence, TypeAlias
 
 import anthropic
+from anthropic.types import MessageParam
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from openai import AsyncOpenAI
+from openai.types.responses import ResponseInputItemParam
 from xai_sdk import AsyncClient
 from xai_sdk.chat import assistant, user
 
@@ -52,7 +54,7 @@ MODEL_CLAUDE = "claude-opus-4-8"
 BATCH_SIZE = 4
 MAX_CONCURRENT_BATCHES = 4
 
-HistoryItem = Tuple[str, str]
+HistoryItem: TypeAlias = tuple[str, str]
 
 
 class ModelInvocationError(RuntimeError):
@@ -99,7 +101,7 @@ def progress(message: str) -> None:
 async def invoke_gpt(
     client: AsyncOpenAI, model: str, question: str, history: Sequence[HistoryItem]
 ) -> str:
-    messages: List[Dict[str, str]] = []
+    messages: list[ResponseInputItemParam] = []
     for prior_question, prior_answer in history:
         messages.append({"role": "user", "content": prior_question})
         messages.append({"role": "assistant", "content": prior_answer})
@@ -206,7 +208,7 @@ async def invoke_claude(
     question: str,
     history: Sequence[HistoryItem],
 ) -> str:
-    messages = []
+    messages: list[MessageParam] = []
     for prior_question, prior_answer in history:
         messages.append({"role": "user", "content": prior_question})
         messages.append({"role": "assistant", "content": prior_answer})
@@ -254,12 +256,13 @@ def build_synthesis_prompt(question: str, responses: PanelResponses) -> str:
 {responses.grok}
 </response>""",
     ]
-    return f'''<prompt>
+    responses_text = "\n".join(response_blocks)
+    return f"""<prompt>
 {question}
 </prompt>
-{"\n".join(response_blocks)}
+{responses_text}
 Merge the responses into a coherent one. List any major conflicts.
-'''
+"""
 
 
 def build_ranking_question(batch_finals: Sequence[str]) -> str:
@@ -350,7 +353,7 @@ async def rank_records(
     return await deliberate(ranking_question, models, clients)
 
 
-def read_records() -> List[str]:
+def read_records() -> list[str]:
     records = []
     for line_number, raw_line in enumerate(sys.stdin, start=1):
         line = raw_line.rstrip("\r\n")

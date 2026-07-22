@@ -1,3 +1,4 @@
+import argparse
 import io
 import os
 import types
@@ -691,7 +692,7 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_run_uses_combined_batch_analyses_for_final_ranking(self):
-        args = types.SimpleNamespace(
+        args = argparse.Namespace(
             batch_size=4,
             gpt_model="gpt-test",
             gemini_model="gemini-test",

@@ -7,7 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -36,7 +36,7 @@ TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
 cache = Cache(Path().resolve() / ".cache")
-finmind_api = None
+finmind_api: Any = None
 
 
 def candidate_pool_size(result_limit: int, multiplier: float) -> int:
@@ -289,7 +289,7 @@ def adjusted_growth_score(symbol: str, score: float) -> float:
 
 def fetch_score(
     path: str,
-    params: dict[str, str | int],
+    params: Mapping[str, str | int],
 ) -> Any:
     response = httpx.get(
         f"{SCORING_BASE_URL}/{path}",
@@ -473,6 +473,8 @@ def fetch_trading_dollars_tw(
     global finmind_api
 
     finmind_key = os.environ.get("FINMIND_KEY")
+    if not finmind_key:
+        raise ValueError("FINMIND_KEY is required for Taiwanese liquidity data.")
 
     today = today_for_market(market)
     start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
