@@ -33,6 +33,7 @@ import asyncio
 import csv
 import os
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Sequence, TypeAlias
 
@@ -73,16 +74,16 @@ class Models:
 class ApiKeys:
     gpt: str
     gemini: str
-    grok: str
     claude: str
+    grok: str
 
 
 @dataclass(frozen=True)
 class PanelClients:
     gpt: AsyncOpenAI
     gemini: genai.Client
-    grok: AsyncClient
     claude: anthropic.AsyncAnthropic
+    grok: AsyncClient
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,15 @@ class PanelResponses:
     gemini: str
     claude: str
     grok: str
+
+    def items(self) -> tuple[tuple[str, str], ...]:
+        """Return responses in the panel's canonical provider order."""
+        return (
+            ("gpt", self.gpt),
+            ("gemini", self.gemini),
+            ("claude", self.claude),
+            ("grok", self.grok),
+        )
 
 
 @dataclass(frozen=True)
@@ -272,21 +282,10 @@ def build_moat_question(batch: Sequence[str]) -> str:
 
 
 def build_synthesis_prompt(question: str, responses: PanelResponses) -> str:
-    response_blocks = [
-        f"""<response model="gpt">
-{responses.gpt}
-</response>""",
-        f"""<response model="gemini">
-{responses.gemini}
-</response>""",
-        f"""<response model="claude">
-{responses.claude}
-</response>""",
-        f"""<response model="grok">
-{responses.grok}
-</response>""",
-    ]
-    responses_text = "\n".join(response_blocks)
+    responses_text = "\n".join(
+        f'<response model="{model}">\n{text}\n</response>'
+        for model, text in responses.items()
+    )
     return f"""<prompt>
 {question}
 </prompt>
@@ -340,9 +339,9 @@ async def rank_records(records: Sequence[str], panel: Panel) -> str:
     return await panel.deliberate(ranking_question)
 
 
-def read_records() -> list[str]:
+def read_records(lines: Iterable[str]) -> list[str]:
     records = []
-    for line_number, raw_line in enumerate(sys.stdin, start=1):
+    for line_number, raw_line in enumerate(lines, start=1):
         line = raw_line.rstrip("\r\n")
         if not line.strip():
             continue
@@ -365,8 +364,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--gpt-model", default=MODEL_GPT_BASE)
     parser.add_argument("--gemini-model", default=MODEL_GEMINI)
-    parser.add_argument("--grok-model", default=MODEL_GROK_BASE)
     parser.add_argument("--claude-model", default=MODEL_CLAUDE)
+    parser.add_argument("--grok-model", default=MODEL_GROK_BASE)
     return parser.parse_args()
 
 
@@ -393,19 +392,19 @@ def load_api_keys() -> ApiKeys:
             "Missing required environment variables: " + ", ".join(missing)
         )
 
-    return ApiKeys(gpt=gpt, gemini=gemini, grok=grok, claude=claude)
+    return ApiKeys(gpt=gpt, gemini=gemini, claude=claude, grok=grok)
 
 
 async def run(args: argparse.Namespace) -> str:
-    records = read_records()
+    records = read_records(sys.stdin)
     if not records:
         raise ValueError("No non-empty CSV records were supplied on standard input.")
 
     models = Models(
         gpt=args.gpt_model,
         gemini=args.gemini_model,
-        grok=args.grok_model,
         claude=args.claude_model,
+        grok=args.grok_model,
     )
     api_keys = load_api_keys()
 
@@ -417,8 +416,8 @@ async def run(args: argparse.Namespace) -> str:
         clients = PanelClients(
             gpt=gpt_client,
             gemini=genai.Client(api_key=api_keys.gemini),
-            grok=grok_client,
             claude=claude_client,
+            grok=grok_client,
         )
         return await rank_records(records, Panel(models=models, clients=clients))
 

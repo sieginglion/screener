@@ -494,6 +494,18 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                 moat_ranker.load_api_keys()
 
 
+class InputParsingTests(unittest.TestCase):
+    def test_read_records_accepts_an_iterable_of_lines(self):
+        records = moat_ranker.read_records(
+            ["NVDA,NVIDIA Corporation\n", 'NFLX,"Netflix, Inc."\n']
+        )
+
+        self.assertEqual(
+            records,
+            ["NVDA,NVIDIA Corporation", 'NFLX,"Netflix, Inc."'],
+        )
+
+
 class PromptBuilderTests(unittest.TestCase):
     def test_build_moat_question(self):
         question = moat_ranker.build_moat_question(
@@ -804,7 +816,9 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             return "Final ranking"
 
         with (
-            patch.object(moat_ranker, "read_records", return_value=records),
+            patch.object(
+                moat_ranker, "read_records", return_value=records
+            ) as read_records,
             patch.object(moat_ranker, "load_api_keys", return_value=api_keys),
             patch.object(
                 moat_ranker,
@@ -833,6 +847,7 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             result = await moat_ranker.run(args)
 
         self.assertEqual(result, "Final ranking")
+        read_records.assert_called_once_with(moat_ranker.sys.stdin)
         self.assertEqual(
             [(question, history) for _, question, history in deliberate_calls],
             [(moat_ranker.build_ranking_question(batch_finals), ())],
