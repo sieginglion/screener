@@ -477,7 +477,12 @@ class GrowthScoringTests(unittest.TestCase):
 
         fetch_score.assert_called_once_with(
             "scores",
-            {"market": "u", "symbol": "A", "q": quadrant.Q},
+            {
+                "market": "u",
+                "symbol": "A",
+                "q": quadrant.Q,
+                "u": quadrant.VALUATION_SCORE_UPPER,
+            },
         )
 
     def test_scoring_failure_skips_the_candidate_with_a_message(self):

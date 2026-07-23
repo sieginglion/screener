@@ -24,6 +24,7 @@ from config import (
     MARKET,
     RESULT_LIMIT,
     TV_SORT_WINDOW,
+    VALUATION_SCORE_UPPER,
     Q,
 )
 
@@ -289,7 +290,7 @@ def adjusted_growth_score(symbol: str, score: float) -> float:
 
 def fetch_score(
     path: str,
-    params: Mapping[str, str | int],
+    params: Mapping[str, str | int | float],
 ) -> Any:
     response = httpx.get(
         f"{SCORING_BASE_URL}/{path}",
@@ -329,7 +330,12 @@ def score_valuation(candidate: Candidate) -> Candidate | None:
         score = mean(
             fetch_score(
                 "scores",
-                {"market": candidate.market, "symbol": candidate.symbol, "q": Q},
+                {
+                    "market": candidate.market,
+                    "symbol": candidate.symbol,
+                    "q": Q,
+                    "u": VALUATION_SCORE_UPPER,
+                },
             )
         )
     except Exception as exc:
