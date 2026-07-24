@@ -43,6 +43,14 @@ Find 16 shared top-ranked tickers from two lists:
 uv run python top_k_intersection.py 16.csv 8.csv --target-count 16 -o moat.csv
 ```
 
+Combine ranked CSV files with normalized reverse-rank scores.  A list with
+``n`` rows assigns scores from ``n / (n * (n + 1) / 2)`` through
+``1 / (n * (n + 1) / 2)``, so every input list has total weight 1:
+
+```sh
+uv run python aggregate_rankings.py -o aggregated.csv
+```
+
 Clear cached data when needed:
 
 ```sh
