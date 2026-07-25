@@ -51,7 +51,7 @@ from xai_sdk.chat import assistant, user
 MODEL_GPT_BASE = "gpt-5.6-terra"
 MODEL_GEMINI = "gemini-3.6-flash"
 MODEL_GROK_BASE = "grok-4.5"
-MODEL_CLAUDE = "claude-opus-4-8"
+MODEL_CLAUDE = "claude-opus-5"
 BATCH_SIZE = 4
 MAX_CONCURRENT_BATCHES = 4
 
