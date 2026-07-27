@@ -259,7 +259,7 @@ async def invoke_claude(
     try:
         response = await client.messages.create(
             model=model,
-            max_tokens=65536,
+            max_tokens=16384,
             messages=messages,
             thinking={"type": "adaptive"},
             output_config={"effort": "xhigh"},
