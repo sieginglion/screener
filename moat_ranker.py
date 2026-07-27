@@ -156,7 +156,7 @@ async def invoke_gpt(
         response = await client.responses.create(
             model=model,
             input=messages,
-            reasoning={"effort": "xhigh"},
+            reasoning={"effort": "xhigh", "mode": "standard"},
         )
         response_status = response.status
         output_text = response.output_text
@@ -259,7 +259,7 @@ async def invoke_claude(
     try:
         response = await client.messages.create(
             model=model,
-            max_tokens=16384,
+            max_tokens=65536,
             messages=messages,
             thinking={"type": "adaptive"},
             output_config={"effort": "xhigh"},
