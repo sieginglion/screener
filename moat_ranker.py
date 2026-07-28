@@ -53,7 +53,7 @@ MODEL_GEMINI = "gemini-3.6-flash"
 MODEL_GROK_BASE = "grok-4.5"
 MODEL_CLAUDE = "claude-opus-5"
 BATCH_SIZE = 4
-MAX_CONCURRENT_BATCHES = 4
+MAX_CONCURRENT_BATCHES = 8
 
 HistoryItem: TypeAlias = tuple[str, str]
 
@@ -257,23 +257,33 @@ async def invoke_claude(
     messages.append({"role": "user", "content": question})
 
     try:
-        response = await client.messages.create(
+        async with client.messages.stream(
             model=model,
-            max_tokens=16384,
+            max_tokens=32768,
             messages=messages,
             thinking={"type": "adaptive"},
             output_config={"effort": "xhigh"},
-        )
+        ) as stream:
+            response = await stream.get_final_message()
     except Exception as exc:
         raise ModelInvocationError(f"Error invoking Anthropic API: {exc}") from exc
 
-    if response.stop_reason != "end_turn":
-        raise ModelInvocationError(
-            f"Claude response stopped with {response.stop_reason!r}."
-        )
-    text = "\n".join(
-        block.text for block in response.content if block.type == "text"
-    ).strip()
+    try:
+        stop_reason = response.stop_reason
+        content = response.content
+    except AttributeError as exc:
+        raise ModelInvocationError(f"Malformed Claude response: {exc}") from exc
+
+    if stop_reason != "end_turn":
+        raise ModelInvocationError(f"Claude response stopped with {stop_reason!r}.")
+
+    try:
+        text = "\n".join(
+            block.text for block in content if block.type == "text"
+        ).strip()
+    except (AttributeError, TypeError) as exc:
+        raise ModelInvocationError(f"Malformed Claude response: {exc}") from exc
+
     return require_text("Claude", text)
 
 

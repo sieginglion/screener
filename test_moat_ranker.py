@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import io
 import os
 import types
@@ -9,17 +10,23 @@ import moat_ranker
 
 
 class AsyncContextManager:
-    def __init__(self, value):
+    def __init__(self, value, *, enter_error=None, exit_error=None):
         self.value = value
+        self.enter_error = enter_error
+        self.exit_error = exit_error
         self.entered = False
         self.exited = False
 
     async def __aenter__(self):
         self.entered = True
+        if self.enter_error is not None:
+            raise self.enter_error
         return self.value
 
     async def __aexit__(self, exc_type, exc, traceback):
         self.exited = True
+        if self.exit_error is not None:
+            raise self.exit_error
         return False
 
 
@@ -231,17 +238,46 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             stop_reason="end_turn",
             content=[types.SimpleNamespace(type="text", text="Claude result")],
         )
+        stream = MagicMock()
+        stream.get_final_message = AsyncMock(return_value=response)
         client = MagicMock()
-        client.messages.create = AsyncMock(return_value=response)
+        client.messages.stream.return_value = AsyncContextManager(stream)
 
         result = await moat_ranker.invoke_claude(client, "claude-test", "Question", ())
 
         self.assertEqual(result, "Claude result")
 
+    async def test_claude_builds_stream_request_with_history(self):
+        response = types.SimpleNamespace(
+            stop_reason="end_turn",
+            content=[types.SimpleNamespace(type="text", text="Claude result")],
+        )
+        stream = MagicMock()
+        stream.get_final_message = AsyncMock(return_value=response)
+        client = MagicMock()
+        client.messages.stream.return_value = AsyncContextManager(stream)
+        history = (("Earlier question", "Earlier answer"),)
+
+        await moat_ranker.invoke_claude(
+            client, "claude-test", "Question", history
+        )
+
+        client.messages.stream.assert_called_once_with(
+            model="claude-test",
+            max_tokens=32768,
+            messages=[
+                {"role": "user", "content": "Earlier question"},
+                {"role": "assistant", "content": "Earlier answer"},
+                {"role": "user", "content": "Question"},
+            ],
+            thinking={"type": "adaptive"},
+            output_config={"effort": "xhigh"},
+        )
+
     async def test_claude_wraps_api_exceptions(self):
         client = MagicMock()
         error = RuntimeError("connection failed")
-        client.messages.create = AsyncMock(side_effect=error)
+        client.messages.stream.side_effect = error
 
         with self.assertRaisesRegex(
             moat_ranker.ModelInvocationError,
@@ -250,6 +286,55 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             await moat_ranker.invoke_claude(client, "claude-test", "Question", ())
 
         self.assertIs(raised.exception.__cause__, error)
+
+    async def test_claude_wraps_stream_lifecycle_exceptions(self):
+        response = types.SimpleNamespace(
+            stop_reason="end_turn",
+            content=[types.SimpleNamespace(type="text", text="Claude result")],
+        )
+        cases = [
+            ("final message", AsyncContextManager(MagicMock()), RuntimeError("read failed")),
+            (
+                "context entry",
+                AsyncContextManager(MagicMock(), enter_error=RuntimeError("enter failed")),
+                None,
+            ),
+            (
+                "context exit",
+                AsyncContextManager(
+                    MagicMock(), exit_error=RuntimeError("exit failed")
+                ),
+                None,
+            ),
+        ]
+
+        for name, manager, stream_error in cases:
+            with self.subTest(name=name):
+                stream = manager.value
+                stream.get_final_message = AsyncMock(
+                    side_effect=stream_error or response
+                )
+                client = MagicMock()
+                client.messages.stream.return_value = manager
+
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError,
+                    "Error invoking Anthropic API",
+                ) as raised:
+                    await moat_ranker.invoke_claude(
+                        client, "claude-test", "Question", ()
+                    )
+
+                self.assertIsInstance(raised.exception.__cause__, RuntimeError)
+
+    async def test_claude_propagates_cancellation(self):
+        stream = MagicMock()
+        stream.get_final_message = AsyncMock(side_effect=asyncio.CancelledError())
+        client = MagicMock()
+        client.messages.stream.return_value = AsyncContextManager(stream)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await moat_ranker.invoke_claude(client, "claude-test", "Question", ())
 
     async def test_claude_rejects_incomplete_or_textless_responses(self):
         responses = [
@@ -282,10 +367,12 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                 "Claude response contained no text",
             ),
         ]
-        client = MagicMock()
-        client.messages.create = AsyncMock(
+        stream = MagicMock()
+        stream.get_final_message = AsyncMock(
             side_effect=[response for response, _ in responses]
         )
+        client = MagicMock()
+        client.messages.stream.return_value = AsyncContextManager(stream)
 
         for _, expected_error in responses:
             with self.subTest(expected_error=expected_error):
@@ -296,6 +383,39 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
                         client, "claude-test", "Question", ()
                     )
                 self.assertNotIn("Error invoking Anthropic API", str(raised.exception))
+
+    async def test_claude_wraps_malformed_responses(self):
+        responses = [
+            types.SimpleNamespace(content=[]),
+            types.SimpleNamespace(stop_reason="end_turn"),
+            types.SimpleNamespace(stop_reason="end_turn", content=None),
+            types.SimpleNamespace(
+                stop_reason="end_turn",
+                content=[types.SimpleNamespace(type="text")],
+            ),
+            types.SimpleNamespace(
+                stop_reason="end_turn",
+                content=[types.SimpleNamespace(type="text", text=123)],
+            ),
+        ]
+
+        for response in responses:
+            with self.subTest(response=response):
+                stream = MagicMock()
+                stream.get_final_message = AsyncMock(return_value=response)
+                client = MagicMock()
+                client.messages.stream.return_value = AsyncContextManager(stream)
+
+                with self.assertRaisesRegex(
+                    moat_ranker.ModelInvocationError, "Malformed Claude response"
+                ) as raised:
+                    await moat_ranker.invoke_claude(
+                        client, "claude-test", "Question", ()
+                    )
+
+                self.assertIsInstance(
+                    raised.exception.__cause__, (AttributeError, TypeError)
+                )
 
     async def test_gemini_rejects_api_and_response_failures(self):
         responses = [
