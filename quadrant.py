@@ -382,7 +382,7 @@ def recent_trading_dollars(
     recent_rows = [
         row
         for row in rows
-        if 0 <= (today - dt.date.fromisoformat(row[0])).days <= LAST_N
+        if 0 <= (today - dt.date.fromisoformat(row[0])).days < LAST_N
     ]
     if not recent_rows:
         sys.stderr.write(
@@ -465,7 +465,7 @@ def fetch_trading_dollars_fmp(
     api_key: str | None,
 ) -> list[LiquidityResult]:
     from_date = (
-        today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS)
+        today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS - 1)
     ).isoformat()
 
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
@@ -520,7 +520,7 @@ def fetch_trading_dollars_tw(
         raise ValueError("FINMIND_KEY is required for Taiwanese liquidity data.")
 
     today = today_for_market(market)
-    start = (today - dt.timedelta(days=LOOKBACK_DAYS)).isoformat()
+    start = (today - dt.timedelta(days=LOOKBACK_DAYS - 1)).isoformat()
     end = today.isoformat()
 
     from FinMind.data import DataLoader

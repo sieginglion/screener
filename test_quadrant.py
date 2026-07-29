@@ -276,7 +276,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
     def test_fmp_loader_fetches_symbols_and_ranks_by_liquidity(self):
         today_date = quadrant.dt.date(2026, 7, 17)
         from_date = (
-            today_date - quadrant.dt.timedelta(days=quadrant.LOOKBACK_DAYS)
+            today_date - quadrant.dt.timedelta(days=quadrant.LOOKBACK_DAYS - 1)
         ).isoformat()
 
         def trading_dollars(market, symbol, description, from_date, api_key):
@@ -357,7 +357,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
         market = quadrant.MARKET_CONFIG_BY_CODE["t"]
         today_date = quadrant.dt.date(2026, 7, 17)
         start = (
-            today_date - quadrant.dt.timedelta(days=quadrant.LOOKBACK_DAYS)
+            today_date - quadrant.dt.timedelta(days=quadrant.LOOKBACK_DAYS - 1)
         ).isoformat()
         finmind = types.ModuleType("FinMind")
         finmind_data = types.ModuleType("FinMind.data")
@@ -608,7 +608,7 @@ class MainTests(unittest.TestCase):
 
 
 class IntradayLiquidityTests(unittest.TestCase):
-    def test_recent_trading_dollars_includes_all_rows_in_the_calendar_day_window(self):
+    def test_recent_trading_dollars_includes_at_most_last_n_calendar_days(self):
         with patch.object(quadrant, "LAST_N", 2):
             total = quadrant.recent_trading_dollars(
                 [
@@ -620,7 +620,7 @@ class IntradayLiquidityTests(unittest.TestCase):
                 quadrant.dt.date(2026, 7, 17),
             )
 
-        self.assertEqual(total, 19)
+        self.assertEqual(total, 15)
 
     def test_recent_trading_dollars_does_not_require_a_row_for_every_day(self):
         with patch.object(quadrant, "LAST_N", 2):
@@ -643,7 +643,7 @@ class IntradayLiquidityTests(unittest.TestCase):
                 quadrant.dt.date(2026, 7, 17),
             )
 
-        self.assertEqual(total, 14)
+        self.assertEqual(total, 10)
 
     def test_recent_trading_dollars_skips_when_no_rows_are_in_the_calendar_window(self):
         with (
@@ -700,8 +700,8 @@ class IntradayLiquidityTests(unittest.TestCase):
                 "2026-07-17",
             )
 
-        self.assertEqual(fmp_result.trading_dollars, 19)
-        self.assertEqual(finmind_result.trading_dollars, 19)
+        self.assertEqual(fmp_result.trading_dollars, 15)
+        self.assertEqual(finmind_result.trading_dollars, 15)
 
     def test_fmp_and_finmind_include_available_rows_in_the_calendar_day_window(self):
         fmp_data = [{"date": "2026-07-17", "vwap": 10, "volume": 1}]
@@ -799,7 +799,7 @@ class IntradayLiquidityTests(unittest.TestCase):
         today.assert_called_once_with(quadrant.MARKET_CONFIG_BY_CODE["t"])
         self.assertEqual(
             result,
-            quadrant.LiquidityResult("1234", "Example Corp.", 9),
+            quadrant.LiquidityResult("1234", "Example Corp.", 5),
         )
 
     def test_fmp_excludes_todays_row_during_new_york_regular_session(self):
@@ -836,7 +836,7 @@ class IntradayLiquidityTests(unittest.TestCase):
         )
         self.assertEqual(
             result,
-            quadrant.LiquidityResult("ABC", "Example Corp.", 9),
+            quadrant.LiquidityResult("ABC", "Example Corp.", 5),
         )
 
     def test_fmp_keeps_todays_row_outside_the_us_market(self):
