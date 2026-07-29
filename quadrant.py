@@ -31,8 +31,9 @@ from config import (
 SCORING_BASE_URL = "http://localhost:8080"
 FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
-LOOKBACK_DAYS = 56
+LOOKBACK_DAYS = 61
 NEW_YORK_TIMEZONE = ZoneInfo("America/New_York")
+TAIPEI_TIMEZONE = ZoneInfo("Asia/Taipei")
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
@@ -77,6 +78,11 @@ def cached_get_json(url: str, params: list[tuple[str, str | int]]) -> Any:
 def new_york_regular_session_in_progress(now: dt.datetime | None = None) -> bool:
     now = (now or dt.datetime.now(NEW_YORK_TIMEZONE)).astimezone(NEW_YORK_TIMEZONE)
     return dt.time(9, 30) <= now.time() < dt.time(16)
+
+
+def taipei_regular_session_in_progress(now: dt.datetime | None = None) -> bool:
+    now = (now or dt.datetime.now(TAIPEI_TIMEZONE)).astimezone(TAIPEI_TIMEZONE)
+    return dt.time(9) <= now.time() < dt.time(13, 30)
 
 
 TV_COMMON_HEADERS = {
@@ -371,11 +377,16 @@ def fetch_symbols_from_tv(
 def recent_trading_dollars(
     rows: Iterable[tuple[str, float]],
     symbol: str,
+    today: dt.date,
 ) -> float | None:
-    recent_rows = sorted(rows, key=lambda row: row[0], reverse=True)[:LAST_N]
-    if len(recent_rows) < LAST_N:
+    recent_rows = [
+        row
+        for row in rows
+        if 0 <= (today - dt.date.fromisoformat(row[0])).days <= LAST_N
+    ]
+    if not recent_rows:
         sys.stderr.write(
-            f"Skipping {symbol} trading dollar data: only {len(recent_rows)} rows, need {LAST_N}\n"
+            f"Skipping {symbol} trading dollar data: no rows in {LAST_N} days\n"
         )
         return None
     return sum(notional for _, notional in recent_rows)
@@ -402,12 +413,12 @@ def fetch_fmp_rows(
 def complete_fmp_rows(
     market: MarketConfig,
     rows: list[dict[str, Any]],
+    today: dt.date,
 ) -> list[dict[str, Any]]:
     if not (market.exclude_intraday_fmp_row and new_york_regular_session_in_progress()):
         return rows
 
-    today = today_for_market(market).isoformat()
-    return [row for row in rows if row["date"] != today]
+    return [row for row in rows if row["date"] != today.isoformat()]
 
 
 def fetch_trading_dollar_fmp(
@@ -417,13 +428,14 @@ def fetch_trading_dollar_fmp(
     from_date: str,
     api_key: str | None,
 ) -> LiquidityResult:
+    today = today_for_market(market)
     rows = fetch_fmp_rows(market, symbol, from_date, api_key)
-    rows = complete_fmp_rows(market, rows)
+    rows = complete_fmp_rows(market, rows, today)
     daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in rows]
     return LiquidityResult(
         symbol=symbol,
         description=description,
-        trading_dollars=recent_trading_dollars(daily_notionals, symbol),
+        trading_dollars=recent_trading_dollars(daily_notionals, symbol, today),
     )
 
 
@@ -474,17 +486,26 @@ def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str):
 
 
 def fetch_trading_dollar_tw(
-    stock_id: str, description: str, start: str, end: str
+    market: MarketConfig,
+    stock_id: str,
+    description: str,
+    start: str,
+    end: str,
 ) -> LiquidityResult:
+    today = today_for_market(market)
     df = fetch_taiwan_stock_daily(stock_id, start, end)
     daily_notionals = [
         (str(row.date), float(row.Trading_money))
         for row in df[["date", "Trading_money"]].itertuples(index=False)
     ]
+    if taipei_regular_session_in_progress():
+        daily_notionals = [
+            row for row in daily_notionals if row[0] != today.isoformat()
+        ]
     return LiquidityResult(
         symbol=stock_id,
         description=description,
-        trading_dollars=recent_trading_dollars(daily_notionals, stock_id),
+        trading_dollars=recent_trading_dollars(daily_notionals, stock_id, today),
     )
 
 
@@ -511,7 +532,7 @@ def fetch_trading_dollars_tw(
     with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
         return list(
             pool.map(
-                lambda s: fetch_trading_dollar_tw(s[0], s[1], start, end),
+                lambda s: fetch_trading_dollar_tw(market, s[0], s[1], start, end),
                 stocks,
             )
         )
