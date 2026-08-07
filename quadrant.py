@@ -7,7 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -313,27 +313,44 @@ def report_scoring_failure(
     sys.stderr.write(f"Skipping {candidate.symbol} {score_name}: {exc}\n")
 
 
-def score_growth(candidate: Candidate) -> Candidate | None:
+def score_candidate(
+    candidate: Candidate,
+    score_name: str,
+    score_field: str,
+    get_score: Callable[[], float],
+) -> Candidate | None:
     try:
-        score = float(
-            fetch_score(
-                "growth",
-                {"market": candidate.market, "symbol": candidate.symbol},
-            )
-        )
+        score = get_score()
     except Exception as exc:
-        report_scoring_failure(candidate, "growth score", exc)
+        report_scoring_failure(candidate, score_name, exc)
         return None
 
-    return replace(
+    return replace(candidate, **{score_field: score})
+
+
+def score_growth(candidate: Candidate) -> Candidate | None:
+    return score_candidate(
         candidate,
-        growth_score=adjusted_growth_score(candidate.symbol, score),
+        "growth score",
+        "growth_score",
+        lambda: adjusted_growth_score(
+            candidate.symbol,
+            float(
+                fetch_score(
+                    "growth",
+                    {"market": candidate.market, "symbol": candidate.symbol},
+                )
+            ),
+        ),
     )
 
 
 def score_valuation(candidate: Candidate) -> Candidate | None:
-    try:
-        score = mean(
+    return score_candidate(
+        candidate,
+        "valuation score",
+        "valuation_score",
+        lambda: mean(
             fetch_score(
                 "scores",
                 {
@@ -343,12 +360,8 @@ def score_valuation(candidate: Candidate) -> Candidate | None:
                     "u": VALUATION_SCORE_UPPER,
                 },
             )
-        )
-    except Exception as exc:
-        report_scoring_failure(candidate, "valuation score", exc)
-        return None
-
-    return replace(candidate, valuation_score=score)
+        ),
+    )
 
 
 def fetch_symbols_from_tv(
