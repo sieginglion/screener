@@ -310,10 +310,10 @@ def fetch_score(
 def report_scoring_failure(
     candidate: Candidate, score_name: str, exc: Exception
 ) -> None:
-    sys.stderr.write(f"Skipping {candidate.symbol} {score_name}: {exc}\n")
+    sys.stderr.write(f"Could not fetch {candidate.symbol} {score_name}: {exc}\n")
 
 
-def score_growth(candidate: Candidate) -> Candidate | None:
+def score_growth(candidate: Candidate) -> Candidate:
     try:
         score = float(
             fetch_score(
@@ -323,7 +323,7 @@ def score_growth(candidate: Candidate) -> Candidate | None:
         )
     except Exception as exc:
         report_scoring_failure(candidate, "growth score", exc)
-        return None
+        return candidate
 
     return replace(
         candidate,
@@ -331,7 +331,7 @@ def score_growth(candidate: Candidate) -> Candidate | None:
     )
 
 
-def score_valuation(candidate: Candidate) -> Candidate | None:
+def score_valuation(candidate: Candidate) -> Candidate:
     try:
         score = mean(
             fetch_score(
@@ -346,7 +346,7 @@ def score_valuation(candidate: Candidate) -> Candidate | None:
         )
     except Exception as exc:
         report_scoring_failure(candidate, "valuation score", exc)
-        return None
+        return candidate
 
     return replace(candidate, valuation_score=score)
 
@@ -567,23 +567,13 @@ def score_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
         return [replace(candidate, growth_score=1) for candidate in attempted]
 
     with ThreadPoolExecutor(max_workers=GROWTH_CONCURRENCY) as executor:
-        scored = [
-            scored_candidate
-            for scored_candidate in executor.map(score_growth, attempted)
-            if scored_candidate is not None
-        ]
-    return scored
+        return list(executor.map(score_growth, attempted))
 
 
 def score_all_valuations(
     candidates: Iterable[Candidate],
 ) -> list[Candidate]:
-    scored = [
-        scored_candidate
-        for scored_candidate in (score_valuation(candidate) for candidate in candidates)
-        if scored_candidate is not None
-    ]
-    return scored
+    return [score_valuation(candidate) for candidate in candidates]
 
 
 def load_candidates() -> list[Candidate]:
@@ -615,12 +605,11 @@ def write_results(results: Iterable[Candidate]) -> None:
 
 def rank_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
     return sorted(
-        (
-            candidate
-            for candidate in candidates
-            if candidate.power is not None and candidate.power > 0
+        candidates,
+        key=lambda candidate: (
+            candidate.power is not None,
+            candidate.power if candidate.power is not None else float("-inf"),
         ),
-        key=lambda candidate: candidate.power or 0,
         reverse=True,
     )
 
