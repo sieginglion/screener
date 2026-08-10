@@ -155,14 +155,6 @@ def apply_sp500_weights(
     return weighted_holdings, missing_symbols
 
 
-async def fetch_sp500_holdings(
-    client: httpx.AsyncClient, holdings_url: str
-) -> list[Holding]:
-    response = await client.get(holdings_url)
-    response.raise_for_status()
-    return sp500_holdings(response.text)
-
-
 async def fetch_prices(
     client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
@@ -187,11 +179,7 @@ async def fetch_prices(
     ):
         raise ValueError(f"Expected {raw_price_count} numeric prices, got {prices!r}")
 
-    raw_prices = [float(price) for price in prices]
-    return [
-        sum(raw_prices[index : index + SMA_WINDOW]) / SMA_WINDOW
-        for index in range(PRICE_COUNT)
-    ]
+    return (np.convolve(prices, np.ones(SMA_WINDOW), "valid") / SMA_WINDOW).tolist()
 
 
 def daily_return_correlations(prices: list[list[float]]) -> np.ndarray:
@@ -232,27 +220,14 @@ def correlation_coordinates(correlations: np.ndarray) -> np.ndarray:
     return eigenvectors[:, dimensions] * np.sqrt(np.maximum(eigenvalues[dimensions], 0))
 
 
-def bubble_areas(stocks: list[Stock], frame: int) -> np.ndarray:
-    return np.array(
-        [
-            stock.weight
-            * (stock.prices[frame] / stock.prices[-1]) ** DOT_SIZE_PRICE_EXPONENT
-            for stock in stocks
-        ]
-    )
-
-
-def estimated_market_cap_change(stock: Stock, frame: int) -> float:
-    """Estimate a daily market-cap change as a share of the final index value."""
-    price = stock.prices[frame]
-    previous_price = stock.prices[frame - 1]
-    final_price = stock.prices[-1]
-    return stock.weight * (price - previous_price) / final_price
-
-
 def bubble_fills(stocks: list[Stock], frame: int) -> list[tuple[int, int, int, int]]:
     """Color moves using the median absolute post-SMA market-cap change."""
-    market_cap_changes = [estimated_market_cap_change(stock, frame) for stock in stocks]
+    market_cap_changes = [
+        stock.weight
+        * (stock.prices[frame] - stock.prices[frame - 1])
+        / stock.prices[-1]
+        for stock in stocks
+    ]
     threshold = float(np.median(np.abs(market_cap_changes)))
     alpha = round(255 * BUBBLE_ALPHA)
     fills = []
@@ -344,7 +319,14 @@ def write_video(stocks: list[Stock], path: Path) -> None:
     try:
         assert ffmpeg.stdin is not None
         for frame in range(1, PRICE_COUNT):
-            areas = bubble_areas(stocks, frame) * K
+            areas = np.array(
+                [
+                    stock.weight
+                    * (stock.prices[frame] / stock.prices[-1])
+                    ** DOT_SIZE_PRICE_EXPONENT
+                    for stock in stocks
+                ]
+            ) * K
             fills = bubble_fills(stocks, frame)
             image = background.copy()
             bubbles = Image.new("RGBA", image.size, (0, 0, 0, 0))
@@ -389,7 +371,9 @@ async def run(
     async with httpx.AsyncClient(
         follow_redirects=True, headers=headers, timeout=60
     ) as client:
-        sp500 = await fetch_sp500_holdings(client, holdings_url)
+        response = await client.get(holdings_url)
+        response.raise_for_status()
+        sp500 = sp500_holdings(response.text)
         if source_holdings is None:
             holdings = sp500[:holding_count]
         else:

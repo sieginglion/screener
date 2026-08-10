@@ -129,19 +129,6 @@ class CorrelationMapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "constant price histories"):
             sp500_prices.daily_return_correlations(prices)
 
-    def test_bubble_area_scales_with_the_square_of_price(self):
-        stocks = [
-            sp500_prices.Stock(
-                "AAA",
-                2,
-                [50.0] + [100.0] * (sp500_prices.PRICE_COUNT - 1),
-                0,
-                0,
-            )
-        ]
-        self.assertEqual(sp500_prices.bubble_areas(stocks, 0)[0], 0.5)
-        self.assertEqual(sp500_prices.bubble_areas(stocks, 1)[0], 2)
-
     def test_bubble_colors_use_the_median_absolute_market_cap_change(self):
         stocks = [
             sp500_prices.Stock("AAA", 2.0, [100.0, 102.0], 0, 0),
@@ -198,6 +185,23 @@ class CorrelationMapTests(unittest.TestCase):
 
 
 class FailedPriceTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def holdings_client() -> object:
+        request = httpx.Request("GET", "https://holdings.test")
+        response = httpx.Response(200, text="", request=request)
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url):
+                return response
+
+        return Client()
+
     async def test_skips_a_stock_with_unavailable_price_history(self):
         holdings = [
             sp500_prices.Holding("AAA", 3),
@@ -209,8 +213,13 @@ class FailedPriceTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 sp500_prices,
-                "fetch_sp500_holdings",
-                new=AsyncMock(return_value=holdings),
+                "sp500_holdings",
+                return_value=holdings,
+            ),
+            patch.object(
+                sp500_prices.httpx,
+                "AsyncClient",
+                return_value=self.holdings_client(),
             ),
             patch.object(
                 sp500_prices,
@@ -238,8 +247,13 @@ class FailedPriceTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 sp500_prices,
-                "fetch_sp500_holdings",
-                new=AsyncMock(return_value=holdings),
+                "sp500_holdings",
+                return_value=holdings,
+            ),
+            patch.object(
+                sp500_prices.httpx,
+                "AsyncClient",
+                return_value=self.holdings_client(),
             ),
             patch.object(
                 sp500_prices,
