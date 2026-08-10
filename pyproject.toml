@@ -9,7 +9,9 @@ dependencies = [
     "finmind",
     "google-genai",
     "httpx",
+    "numpy",
     "openai",
+    "pillow",
     "python-dotenv",
     "xai-sdk",
 ]

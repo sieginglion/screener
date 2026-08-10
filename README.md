@@ -31,6 +31,15 @@ Start the scoring service at `http://localhost:8080`, then generate a `ticker,de
 uv run python quadrant.py > 16.csv
 ```
 
+Create an S&P 500 correlation-map video using BlackRock's latest S&P 500
+holdings export, or for tickers in the first column of a headerless CSV (bubble
+sizes use S&P 500 weights):
+
+```sh
+uv run python sp500_prices.py
+uv run python sp500_prices.py 16.csv
+```
+
 Rank its moats with OpenAI, Gemini, xAI, and Anthropic:
 
 ```sh
@@ -43,9 +52,9 @@ Find 16 shared top-ranked tickers from two lists:
 uv run python top_k_intersection.py 16.csv 8.csv --target-count 16 -o moat.csv
 ```
 
-Combine ranked CSV files with normalized reverse-rank scores.  A list with
-``n`` rows assigns scores from ``n / (n * (n + 1) / 2)`` through
-``1 / (n * (n + 1) / 2)``, so every input list has total weight 1:
+Combine ranked CSV files with raw linear reverse-rank scores. Every row is
+used; in a list of length ``n``, scores decline from ``n`` for the first row to
+``1`` for the last:
 
 ```sh
 uv run python aggregate_rankings.py -o aggregated.csv

@@ -322,7 +322,7 @@ async def process_batch(batch: Sequence[str], batch_number: int, panel: Panel) -
     # The requested next user turn is deliberately just these two words.
     deeper_history = ((initial_question, first_synthesis),)
     progress(f"Batch {batch_number}: deeper analysis")
-    return await panel.deliberate("think deeper", deeper_history)
+    return await panel.deliberate("think again", deeper_history)
 
 
 async def rank_records(records: Sequence[str], panel: Panel) -> str:
