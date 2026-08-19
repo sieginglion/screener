@@ -257,19 +257,20 @@ class LoadTopCandidatesTests(unittest.TestCase):
     def test_top_candidates_excludes_insufficient_liquidity_data(self):
         result = quadrant.top_candidates(
             [
-                quadrant.LiquidityResult("A", "Alpha", None),
-                quadrant.LiquidityResult("B", "Beta", 2),
-                quadrant.LiquidityResult("C", "Charlie", 1),
+                quadrant.Candidate("A", "Alpha", trading_dollars=None),
+                quadrant.Candidate("B", "Beta", trading_dollars=2),
+                quadrant.Candidate("C", "Charlie", trading_dollars=1),
             ],
             limit=3,
-            market="u",
         )
 
         self.assertEqual(
             result,
             [
-                quadrant.Candidate(symbol="B", description="Beta"),
-                quadrant.Candidate(symbol="C", description="Charlie"),
+                quadrant.Candidate(symbol="B", description="Beta", trading_dollars=2),
+                quadrant.Candidate(
+                    symbol="C", description="Charlie", trading_dollars=1
+                ),
             ],
         )
 
@@ -280,10 +281,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
         ).isoformat()
 
         def trading_dollars(market, symbol, description, from_date, api_key):
-            return quadrant.LiquidityResult(
-                symbol,
-                description,
-                {"A": 1, "B": 2}[symbol],
+            return quadrant.Candidate(
+                symbol=symbol,
+                description=description,
+                market=market.code,
+                trading_dollars={"A": 1, "B": 2}[symbol],
             )
 
         with (
@@ -309,8 +311,10 @@ class LoadTopCandidatesTests(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                quadrant.Candidate(symbol="B", description="Beta"),
-                quadrant.Candidate(symbol="A", description="Alpha; Inc."),
+                quadrant.Candidate(symbol="B", description="Beta", trading_dollars=2),
+                quadrant.Candidate(
+                    symbol="A", description="Alpha; Inc.", trading_dollars=1
+                ),
             ],
         )
         symbols.assert_called_once_with(market=self.market, top_n_symbols=3)
@@ -325,10 +329,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
 
     def test_loader_omits_candidates_without_enough_liquidity_data(self):
         def trading_dollars(market, symbol, description, from_date, api_key):
-            return quadrant.LiquidityResult(
-                symbol,
-                description,
-                {"A": None, "B": 2}[symbol],
+            return quadrant.Candidate(
+                symbol=symbol,
+                description=description,
+                market=market.code,
+                trading_dollars={"A": None, "B": 2}[symbol],
             )
 
         with (
@@ -350,7 +355,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [quadrant.Candidate(symbol="B", description="Beta", market="u")],
+            [
+                quadrant.Candidate(
+                    symbol="B", description="Beta", market="u", trading_dollars=2
+                )
+            ],
         )
 
     def test_taiwan_loader_logs_in_and_ranks_by_liquidity(self):
@@ -367,10 +376,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
         setattr(finmind_data, "DataLoader", data_loader)
 
         def trading_dollars(market, symbol, description, start, end):
-            return quadrant.LiquidityResult(
-                symbol,
-                description,
-                {"A": 1, "B": 2}[symbol],
+            return quadrant.Candidate(
+                symbol=symbol,
+                description=description,
+                market=market.code,
+                trading_dollars={"A": 1, "B": 2}[symbol],
             )
 
         with (
@@ -403,8 +413,15 @@ class LoadTopCandidatesTests(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                quadrant.Candidate(symbol="B", description="Beta", market="t"),
-                quadrant.Candidate(symbol="A", description="Alpha; Inc.", market="t"),
+                quadrant.Candidate(
+                    symbol="B", description="Beta", market="t", trading_dollars=2
+                ),
+                quadrant.Candidate(
+                    symbol="A",
+                    description="Alpha; Inc.",
+                    market="t",
+                    trading_dollars=1,
+                ),
             ],
         )
         data_loader.assert_called_once_with()
@@ -451,7 +468,9 @@ class CandidateLoadingTests(unittest.TestCase):
 
 class GrowthScoringTests(unittest.TestCase):
     def test_scores_are_kept_on_the_same_candidate(self):
-        candidate = quadrant.Candidate(symbol="A", description="Alpha")
+        candidate = quadrant.Candidate(
+            symbol="A", description="Alpha", trading_dollars=123
+        )
 
         with patch("quadrant.fetch_score", side_effect=[2, [3]]):
             growth_candidate = quadrant.score_growth(candidate)
@@ -464,6 +483,7 @@ class GrowthScoringTests(unittest.TestCase):
             quadrant.Candidate(
                 symbol="A",
                 description="Alpha",
+                trading_dollars=123,
                 growth_score=2,
                 valuation_score=3,
             ),
@@ -812,11 +832,11 @@ class IntradayLiquidityTests(unittest.TestCase):
 
         self.assertEqual(
             fmp_result,
-            quadrant.LiquidityResult("ABC", "Example Corp.", 10),
+            quadrant.Candidate("ABC", "Example Corp.", market="u", trading_dollars=10),
         )
         self.assertEqual(
             finmind_result,
-            quadrant.LiquidityResult("1234", "Example Corp.", 10),
+            quadrant.Candidate("1234", "Example Corp.", market="t", trading_dollars=10),
         )
 
     def test_new_york_regular_session_boundaries(self):
@@ -877,7 +897,7 @@ class IntradayLiquidityTests(unittest.TestCase):
         today.assert_called_once_with(quadrant.MARKET_CONFIG_BY_CODE["t"])
         self.assertEqual(
             result,
-            quadrant.LiquidityResult("1234", "Example Corp.", 5),
+            quadrant.Candidate("1234", "Example Corp.", market="t", trading_dollars=5),
         )
 
     def test_fmp_excludes_todays_row_during_new_york_regular_session(self):
@@ -914,7 +934,7 @@ class IntradayLiquidityTests(unittest.TestCase):
         )
         self.assertEqual(
             result,
-            quadrant.LiquidityResult("ABC", "Example Corp.", 5),
+            quadrant.Candidate("ABC", "Example Corp.", market="u", trading_dollars=5),
         )
 
     def test_fmp_keeps_todays_row_outside_the_us_market(self):
@@ -953,7 +973,7 @@ class IntradayLiquidityTests(unittest.TestCase):
         )
         self.assertEqual(
             result,
-            quadrant.LiquidityResult("7203", "Toyota", 105),
+            quadrant.Candidate("7203", "Toyota", market="j", trading_dollars=105),
         )
 
 

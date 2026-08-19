@@ -271,15 +271,9 @@ class Candidate:
     symbol: str
     description: str
     market: str = "u"
+    trading_dollars: float | None = None
     growth_score: float | None = None
     valuation_score: float | None = None
-
-
-@dataclass(frozen=True)
-class LiquidityResult:
-    symbol: str
-    description: str
-    trading_dollars: float | None
 
 
 def adjusted_growth_score(symbol: str, score: float) -> float:
@@ -399,12 +393,14 @@ def recent_trading_dollars(
     return sum(notional for _, notional in recent_rows)
 
 
-def fetch_fmp_rows(
+def fetch_trading_dollar_fmp(
     market: MarketConfig,
     symbol: str,
+    description: str,
     from_date: str,
     api_key: str | None,
-) -> list[dict[str, Any]]:
+) -> Candidate:
+    today = today_for_market(market)
     fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     data = cached_get_json(
         f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
@@ -414,63 +410,39 @@ def fetch_fmp_rows(
             *([] if market.fmp_legacy else [("symbol", fmp_symbol)]),
         ],
     )
-    return data.get("historical", []) if market.fmp_legacy else data
+    rows = data.get("historical", []) if market.fmp_legacy else data
+    if market.exclude_intraday_fmp_row and new_york_regular_session_in_progress():
+        rows = [row for row in rows if row["date"] != today.isoformat()]
 
-
-def complete_fmp_rows(
-    market: MarketConfig,
-    rows: list[dict[str, Any]],
-    today: dt.date,
-) -> list[dict[str, Any]]:
-    if not (market.exclude_intraday_fmp_row and new_york_regular_session_in_progress()):
-        return rows
-
-    return [row for row in rows if row["date"] != today.isoformat()]
-
-
-def fetch_trading_dollar_fmp(
-    market: MarketConfig,
-    symbol: str,
-    description: str,
-    from_date: str,
-    api_key: str | None,
-) -> LiquidityResult:
-    today = today_for_market(market)
-    rows = fetch_fmp_rows(market, symbol, from_date, api_key)
-    rows = complete_fmp_rows(market, rows, today)
     daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in rows]
-    return LiquidityResult(
+    return Candidate(
         symbol=symbol,
         description=description,
+        market=market.code,
         trading_dollars=recent_trading_dollars(daily_notionals, symbol, today),
     )
 
 
 def top_candidates(
-    results: Iterable[LiquidityResult],
+    candidates: Iterable[Candidate],
     limit: int,
-    market: str,
 ) -> list[Candidate]:
-    top = sorted(
-        (result for result in results if result.trading_dollars is not None),
-        key=lambda result: result.trading_dollars or 0,
+    return sorted(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.trading_dollars is not None
+        ),
+        key=lambda candidate: candidate.trading_dollars or 0,
         reverse=True,
     )[:limit]
-    return [
-        Candidate(
-            symbol=result.symbol,
-            description=result.description,
-            market=market,
-        )
-        for result in top
-    ]
 
 
 def fetch_trading_dollars_fmp(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
     api_key: str | None,
-) -> list[LiquidityResult]:
+) -> list[Candidate]:
     from_date = (
         today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS - 1)
     ).isoformat()
@@ -498,7 +470,7 @@ def fetch_trading_dollar_tw(
     description: str,
     start: str,
     end: str,
-) -> LiquidityResult:
+) -> Candidate:
     today = today_for_market(market)
     df = fetch_taiwan_stock_daily(stock_id, start, end)
     daily_notionals = [
@@ -509,9 +481,10 @@ def fetch_trading_dollar_tw(
         daily_notionals = [
             row for row in daily_notionals if row[0] != today.isoformat()
         ]
-    return LiquidityResult(
+    return Candidate(
         symbol=stock_id,
         description=description,
+        market=market.code,
         trading_dollars=recent_trading_dollars(daily_notionals, stock_id, today),
     )
 
@@ -519,7 +492,7 @@ def fetch_trading_dollar_tw(
 def fetch_trading_dollars_tw(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
-) -> list[LiquidityResult]:
+) -> list[Candidate]:
     global finmind_api
 
     finmind_key = os.environ.get("FINMIND_KEY")
@@ -565,7 +538,7 @@ def load_top_candidates(
     else:
         liquidity = fetch_trading_dollars_fmp(market, stocks, api_key)
 
-    return top_candidates(liquidity, top_n_results, market.code)
+    return top_candidates(liquidity, top_n_results)
 
 
 def score_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
