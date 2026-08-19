@@ -468,7 +468,6 @@ class GrowthScoringTests(unittest.TestCase):
                 valuation_score=3,
             ),
         )
-        self.assertEqual(scored_candidate.power, 6)
 
     def test_scoring_uses_the_expected_endpoint_parameters_and_parser(self):
         candidate = quadrant.Candidate(symbol="A", description="Alpha", market="u")
@@ -567,8 +566,87 @@ class GrowthScoringTests(unittest.TestCase):
         )
 
 
+class RankingTests(unittest.TestCase):
+    def test_rank_candidates_sums_independent_metric_ranks(self):
+        candidates = [
+            quadrant.Candidate(
+                symbol="A", description="Alpha", growth_score=100, valuation_score=0.1
+            ),
+            quadrant.Candidate(
+                symbol="B", description="Beta", growth_score=2, valuation_score=0.2
+            ),
+            quadrant.Candidate(
+                symbol="C", description="Charlie", growth_score=1, valuation_score=0.15
+            ),
+            quadrant.Candidate(
+                symbol="D", description="Delta", growth_score=0.5, valuation_score=0.05
+            ),
+        ]
+
+        self.assertEqual(
+            [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
+            ["B", "A", "C", "D"],
+        )
+
+    def test_metric_ranks_assigns_average_rank_to_equal_scores(self):
+        candidates = [
+            quadrant.Candidate(
+                symbol="A", description="Alpha", growth_score=10, valuation_score=5
+            ),
+            quadrant.Candidate(
+                symbol="B", description="Beta", growth_score=10, valuation_score=4
+            ),
+            quadrant.Candidate(
+                symbol="C", description="Charlie", growth_score=5, valuation_score=4
+            ),
+        ]
+
+        self.assertEqual(
+            quadrant.metric_ranks(candidates, "growth_score"),
+            {candidates[0]: 1.5, candidates[1]: 1.5, candidates[2]: 3},
+        )
+        self.assertEqual(
+            quadrant.metric_ranks(candidates, "valuation_score"),
+            {candidates[0]: 1, candidates[1]: 2.5, candidates[2]: 2.5},
+        )
+
+    def test_rank_candidates_uses_symbol_to_break_a_combined_rank_tie(self):
+        candidates = [
+            quadrant.Candidate(
+                symbol="B", description="Beta", growth_score=5, valuation_score=10
+            ),
+            quadrant.Candidate(
+                symbol="A", description="Alpha", growth_score=10, valuation_score=5
+            ),
+        ]
+
+        self.assertEqual(
+            [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
+            ["A", "B"],
+        )
+
+    def test_rank_candidates_excludes_incomplete_and_non_positive_scores(self):
+        candidates = [
+            quadrant.Candidate(
+                symbol="A", description="Alpha", growth_score=2, valuation_score=2
+            ),
+            quadrant.Candidate(symbol="B", description="Incomplete", growth_score=2),
+            quadrant.Candidate(
+                symbol="C", description="Zero", growth_score=0, valuation_score=2
+            ),
+            quadrant.Candidate(
+                symbol="D", description="Negative", growth_score=2, valuation_score=-1
+            ),
+        ]
+
+        self.assertEqual(
+            [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
+            ["A"],
+        )
+
+
 class MainTests(unittest.TestCase):
-    def test_main_writes_only_positive_complete_candidates_by_descending_power(self):
+    def test_main_writes_only_positive_complete_candidates_by_combined_rank(self):
         source_candidates = [quadrant.Candidate(symbol="source", description="Source")]
         scored_candidates = [
             quadrant.Candidate(

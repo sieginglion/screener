@@ -274,12 +274,6 @@ class Candidate:
     growth_score: float | None = None
     valuation_score: float | None = None
 
-    @property
-    def power(self) -> float | None:
-        if self.growth_score is None or self.valuation_score is None:
-            return None
-        return self.growth_score * self.valuation_score
-
 
 @dataclass(frozen=True)
 class LiquidityResult:
@@ -626,15 +620,46 @@ def write_results(results: Iterable[Candidate]) -> None:
         )
 
 
-def rank_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
-    return sorted(
-        (
-            candidate
-            for candidate in candidates
-            if candidate.power is not None and candidate.power > 0
-        ),
-        key=lambda candidate: candidate.power or 0,
+def metric_ranks(
+    candidates: Iterable[Candidate], score_field: str
+) -> dict[Candidate, float]:
+    ordered = sorted(
+        candidates,
+        key=lambda candidate: getattr(candidate, score_field),
         reverse=True,
+    )
+    ranks = {}
+    start = 0
+    while start < len(ordered):
+        end = start + 1
+        score = getattr(ordered[start], score_field)
+        while end < len(ordered) and getattr(ordered[end], score_field) == score:
+            end += 1
+
+        rank = (start + 1 + end) / 2
+        for candidate in ordered[start:end]:
+            ranks[candidate] = rank
+        start = end
+    return ranks
+
+
+def rank_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
+    eligible = [
+        candidate
+        for candidate in candidates
+        if candidate.growth_score is not None
+        and candidate.growth_score > 0
+        and candidate.valuation_score is not None
+        and candidate.valuation_score > 0
+    ]
+    growth_ranks = metric_ranks(eligible, "growth_score")
+    valuation_ranks = metric_ranks(eligible, "valuation_score")
+    return sorted(
+        eligible,
+        key=lambda candidate: (
+            growth_ranks[candidate] + valuation_ranks[candidate],
+            candidate.symbol,
+        ),
     )
 
 
