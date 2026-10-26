@@ -48,10 +48,10 @@ from xai_sdk import AsyncClient
 from xai_sdk.chat import assistant, user
 
 # These are the model variants used by pareja.py.
-MODEL_GPT_BASE = "gpt-5.6-terra"
-MODEL_GEMINI = "gemini-3.6-flash"
-MODEL_GROK_BASE = "grok-4.5"
-MODEL_CLAUDE = "claude-opus-5"
+MODEL_GPT_BASE = "gpt-6.1-sol"
+MODEL_GEMINI = "gemini-4-argon"
+MODEL_GROK_BASE = "grok-4.7"
+MODEL_CLAUDE = "claude-opus-5-5"
 BATCH_SIZE = 4
 MAX_CONCURRENT_BATCHES = 8
 
@@ -223,7 +223,7 @@ async def invoke_grok(
     client: AsyncClient, model: str, question: str, history: Sequence[HistoryItem]
 ) -> str:
     try:
-        chat = client.chat.create(model=model, tools=[], reasoning_effort="high")
+        chat = client.chat.create(model=model, tools=[], reasoning_effort="xhigh")
         for prior_question, prior_answer in history:
             chat.append(user(prior_question))
             chat.append(assistant(prior_answer))
@@ -262,7 +262,7 @@ async def invoke_claude(
             max_tokens=32768,
             messages=messages,
             thinking={"type": "adaptive"},
-            output_config={"effort": "xhigh"},
+            output_config={"effort": "high"},
         ) as stream:
             response = await stream.get_final_message()
     except Exception as exc:
