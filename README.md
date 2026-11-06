@@ -1,6 +1,6 @@
 # Screener
 
-Screen liquid stocks, rank their economic moats with an AI panel, and compare ranked lists.
+Screen liquid stocks, rank their economic moats or pricing power with an AI panel, and compare ranked lists.
 
 ## Setup
 
@@ -10,14 +10,14 @@ Requires Python 3.12 and [uv](https://docs.astral.sh/uv/):
 uv sync
 ```
 
-Use `uv run` for all commands. Create an uncommitted `config.py` with the settings required by `quadrant.py`, including market: `u` (US), `t` (Taiwan), or `j` (Japan).
+Use `uv run` for commands; `./ranker.py` invokes it automatically. Create an uncommitted `config.py` with the settings required by `quadrant.py`, including market: `u` (US), `t` (Taiwan), or `j` (Japan).
 
 Add only the credentials you need to `.env`:
 
 ```dotenv
 FMP_API_KEY=...       # US/Japan liquidity
 FINMIND_KEY=...       # Taiwan liquidity
-OPENAI_API_KEY=...    # Moat ranking panel
+OPENAI_API_KEY=...    # Ranking panel
 GOOGLE_API_KEY=...    # Or GEMINI_API_KEY
 XAI_API_KEY=...
 ANTHROPIC_API_KEY=...
@@ -50,10 +50,12 @@ uv run python sp500_prices.py
 uv run python sp500_prices.py 16.csv
 ```
 
-Rank its moats with OpenAI, Gemini, xAI, and Anthropic:
+Rank its moats or pricing power with OpenAI, Gemini, xAI, and Anthropic
+(moat is the default criterion):
 
 ```sh
-uv run python moat_ranker.py < 16.csv > 16-moats.md
+./ranker.py --criterion moat < 16.csv > 16-moats.md
+./ranker.py --criterion pricing-power < 16.csv > 16-pricing.md
 ```
 
 Find 16 shared top-ranked tickers from two lists:

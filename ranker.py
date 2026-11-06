@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""Rank the moat width of CSV-style stock lists using the Pareja model panel.
+#!/usr/bin/env -S uv run python
+"""Rank CSV-style stock lists by moat or pricing power using the Pareja panel.
 
 Read one security per line from standard input, for example:
 
@@ -8,10 +8,10 @@ Read one security per line from standard input, for example:
     NFLX,"Netflix, Inc."
 
 The script processes four securities at a time.  For each batch it asks the
-four Pareja models about their moats, has GPT synthesize their answers, asks
-each model to "think deeper" with that synthesis as shared history, and
+four Pareja models about the selected criterion, has GPT synthesize their answers, asks
+each model to "think again" with that synthesis as shared history, and
 synthesizes again.  It then asks all four models to rank the combined batch
-findings into four moat-width tiers and performs one final GPT synthesis.
+findings into four tiers by that criterion and performs one final GPT synthesis.
 
 Failure behavior: fail as soon as a provider error is propagated. Do not
 synthesize a partial panel or emit a final ranking after a failed deliberation.
@@ -49,13 +49,37 @@ from xai_sdk.chat import assistant, user
 
 # These are the model variants used by pareja.py.
 MODEL_GPT_BASE = "gpt-6.1-sol"
+# https://platform.openai.com/settings/organization/billing/overview
 MODEL_GEMINI = "gemini-4-argon"
 MODEL_GROK_BASE = "grok-4.7"
+# https://console.x.ai/team/e19232f7-514a-411e-9b32-1a4ced1af9f2/settings/billing
 MODEL_CLAUDE = "claude-opus-5-5"
+# https://platform.claude.com/settings/billing
 BATCH_SIZE = 4
 MAX_CONCURRENT_BATCHES = 8
 
 HistoryItem: TypeAlias = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class Criterion:
+    name: str
+    analysis_question: str
+    ranking_instruction: str
+
+
+CRITERIA = {
+    "moat": Criterion(
+        name="moat",
+        analysis_question="What moats do they have?",
+        ranking_instruction="Rank them into 4 tiers by moat",
+    ),
+    "pricing-power": Criterion(
+        name="pricing power",
+        analysis_question="What pricing powers do they have?",
+        ranking_instruction="Rank them into 4 tiers by pricing power",
+    ),
+}
 
 
 class ModelInvocationError(RuntimeError):
@@ -287,8 +311,8 @@ async def invoke_claude(
     return require_text("Claude", text)
 
 
-def build_moat_question(batch: Sequence[str]) -> str:
-    return "\n".join(batch) + "\nWhat are their moats?"
+def build_analysis_question(batch: Sequence[str], criterion: Criterion) -> str:
+    return "\n".join(batch) + "\n" + criterion.analysis_question
 
 
 def build_synthesis_prompt(question: str, responses: PanelResponses) -> str:
@@ -304,17 +328,20 @@ Merge the responses into a coherent one. List any major conflicts.
 """
 
 
-def build_ranking_question(batch_finals: Sequence[str]) -> str:
+def build_ranking_question(batch_finals: Sequence[str], criterion: Criterion) -> str:
     return (
         "<context>\n"
         + "\n".join(batch_finals)
-        + "\n</context>\nRank them into 4 tiers by moat width"
+        + "\n</context>\n"
+        + criterion.ranking_instruction
     )
 
 
-async def process_batch(batch: Sequence[str], batch_number: int, panel: Panel) -> str:
-    initial_question = build_moat_question(batch)
-    progress(f"Batch {batch_number}: first-pass moat analysis")
+async def process_batch(
+    batch: Sequence[str], batch_number: int, panel: Panel, criterion: Criterion
+) -> str:
+    initial_question = build_analysis_question(batch, criterion)
+    progress(f"Batch {batch_number}: first-pass {criterion.name} analysis")
     first_synthesis = await panel.deliberate(initial_question)
 
     # In pareja.py, the next turn's history contains the prior user question and
@@ -325,7 +352,9 @@ async def process_batch(batch: Sequence[str], batch_number: int, panel: Panel) -
     return await panel.deliberate("think again", deeper_history)
 
 
-async def rank_records(records: Sequence[str], panel: Panel) -> str:
+async def rank_records(
+    records: Sequence[str], panel: Panel, criterion: Criterion
+) -> str:
     """Process batches and produce the final panel ranking."""
     batches = [
         records[index : index + BATCH_SIZE]
@@ -335,7 +364,7 @@ async def rank_records(records: Sequence[str], panel: Panel) -> str:
 
     async def process_batch_with_limit(batch_number: int, batch: Sequence[str]) -> str:
         async with batch_semaphore:
-            return await process_batch(batch, batch_number, panel)
+            return await process_batch(batch, batch_number, panel, criterion)
 
     batch_finals = await asyncio.gather(
         *(
@@ -344,7 +373,7 @@ async def rank_records(records: Sequence[str], panel: Panel) -> str:
         )
     )
 
-    ranking_question = build_ranking_question(batch_finals)
+    ranking_question = build_ranking_question(batch_finals, criterion)
     progress("Final ranking: sending all batch findings to the model panel")
     return await panel.deliberate(ranking_question)
 
@@ -370,7 +399,13 @@ def read_records(lines: Iterable[str]) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Rank stock moats from CSV records supplied on standard input."
+        description="Rank stocks by moat or pricing power from CSV records on stdin."
+    )
+    parser.add_argument(
+        "--criterion",
+        choices=CRITERIA,
+        default="moat",
+        help="Ranking criterion (default: moat).",
     )
     parser.add_argument("--gpt-model", default=MODEL_GPT_BASE)
     parser.add_argument("--gemini-model", default=MODEL_GEMINI)
@@ -429,7 +464,9 @@ async def run(args: argparse.Namespace) -> str:
             claude=claude_client,
             grok=grok_client,
         )
-        return await rank_records(records, Panel(models=models, clients=clients))
+        return await rank_records(
+            records, Panel(models=models, clients=clients), CRITERIA[args.criterion]
+        )
 
 
 def main() -> int:
