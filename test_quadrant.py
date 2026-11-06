@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 from unittest.mock import MagicMock, Mock, call, patch
 from zoneinfo import ZoneInfo
 
@@ -467,56 +468,100 @@ class CandidateLoadingTests(unittest.TestCase):
 
 
 class GrowthScoringTests(unittest.TestCase):
-    def test_scores_are_kept_on_the_same_candidate(self):
-        candidate = quadrant.Candidate(
-            symbol="A", description="Alpha", trading_dollars=123
+    def test_all_nullable_signed_metric_pairs_are_accepted_and_ranked(self):
+        cases = (
+            (quadrant.score_growth, ("revenue_growth", "eps_growth"), "growth_rank"),
+            (quadrant.score_valuation, ("ps_score", "pe_score"), "valuation_rank"),
         )
+        for scorer, fields, rank_field in cases:
+            references = [
+                replace(
+                    quadrant.Candidate(symbol, symbol), **dict.fromkeys(fields, value)
+                )
+                for symbol, value in (("low", -2), ("zero", 0), ("high", 2))
+            ]
+            # With reference values -2, 0, 2: -1 ranks third, 0 ties at
+            # ranks 2 and 3, and +1 ranks second. Higher values rank better.
+            expected_ranks = {-1: 3, 0: 2.5, 1: 2}
+            for first in (None, -1, 0, 1):
+                for second in (None, -1, 0, 1):
+                    with (
+                        self.subTest(scorer=scorer.__name__, pair=(first, second)),
+                        patch("quadrant.fetch_score", return_value=[first, second]),
+                    ):
+                        scored = scorer(quadrant.Candidate("target", "Target"))
+                        self.assertEqual(
+                            scored,
+                            replace(
+                                quadrant.Candidate("target", "Target"),
+                                **dict(zip(fields, (first, second))),
+                            ),
+                        )
+                        assert scored is not None
+                        ranked = quadrant.combine_metric_ranks(
+                            [*references, scored], fields, rank_field
+                        )
+                        target = [item for item in ranked if item.symbol == "target"]
+                        if first is None and second is None:
+                            self.assertEqual(target, [])
+                        else:
+                            ranks = [
+                                expected_ranks[value]
+                                for value in (first, second)
+                                if value is not None
+                            ]
+                            self.assertEqual(len(target), 1)
+                            self.assertEqual(
+                                getattr(target[0], rank_field), sum(ranks) / len(ranks)
+                            )
 
-        with patch("quadrant.fetch_score", side_effect=[2, [3]]):
-            growth_candidate = quadrant.score_growth(candidate)
-            assert growth_candidate is not None
-            scored_candidate = quadrant.score_valuation(growth_candidate)
-            assert scored_candidate is not None
-
+    def test_scores_are_kept_on_the_same_candidate(self):
+        candidate = quadrant.Candidate("A", "Alpha", trading_dollars=123)
+        with patch("quadrant.fetch_score", side_effect=[[2, -1], [0, None]]):
+            grown = quadrant.score_growth(candidate)
+            assert grown is not None
+            scored = quadrant.score_valuation(grown)
         self.assertEqual(
-            scored_candidate,
+            scored,
             quadrant.Candidate(
-                symbol="A",
-                description="Alpha",
+                "A",
+                "Alpha",
                 trading_dollars=123,
-                growth_score=2,
-                valuation_score=3,
+                revenue_growth=2,
+                eps_growth=-1,
+                ps_score=0,
             ),
         )
 
-    def test_scoring_uses_the_expected_endpoint_parameters_and_parser(self):
-        candidate = quadrant.Candidate(symbol="A", description="Alpha", market="u")
-
-        with patch("quadrant.fetch_score", return_value=2) as fetch_score:
-            quadrant.score_growth(candidate)
-
-        fetch_score.assert_called_once_with(
-            "growth",
-            {"market": "u", "symbol": "A"},
+    def test_scoring_uses_the_expected_endpoints_and_parameters(self):
+        candidate = quadrant.Candidate("A", "Alpha")
+        with patch("quadrant.fetch_score", return_value=[None, -2]) as fetch:
+            grown = quadrant.score_growth(candidate)
+            scored = quadrant.score_valuation(candidate)
+        self.assertEqual(
+            fetch.call_args_list,
+            [
+                call("growths", {"market": "u", "symbol": "A"}),
+                call(
+                    "scores",
+                    {
+                        "market": "u",
+                        "symbol": "A",
+                        "q": quadrant.Q,
+                        "u": quadrant.VALUATION_SCORE_UPPER,
+                    },
+                ),
+            ],
         )
-
-        with patch("quadrant.fetch_score", return_value=[2]) as fetch_score:
-            quadrant.score_valuation(candidate)
-
-        fetch_score.assert_called_once_with(
-            "scores",
-            {
-                "market": "u",
-                "symbol": "A",
-                "q": quadrant.Q,
-                "u": quadrant.VALUATION_SCORE_UPPER,
-            },
-        )
+        assert grown is not None and scored is not None
+        self.assertIsNone(grown.revenue_growth)
+        self.assertEqual(grown.eps_growth, -2)
+        self.assertIsNone(scored.ps_score)
+        self.assertEqual(scored.pe_score, -2)
 
     def test_scoring_failure_skips_the_candidate_with_a_message(self):
-        candidate = quadrant.Candidate(symbol="A", description="Alpha")
-
-        for scorer, score_label in (
+        candidate = quadrant.Candidate("A", "Alpha")
+        for scorer, label in (
             (quadrant.score_growth, "growth score"),
             (quadrant.score_valuation, "valuation score"),
         ):
@@ -526,183 +571,311 @@ class GrowthScoringTests(unittest.TestCase):
                 patch("sys.stderr", new_callable=io.StringIO) as stderr,
             ):
                 self.assertIsNone(scorer(candidate))
+                self.assertEqual(
+                    stderr.getvalue(), f"Skipping A {label}: unavailable\n"
+                )
 
-            self.assertEqual(
-                stderr.getvalue(),
-                f"Skipping A {score_label}: unavailable\n",
-            )
-
-    def test_invalid_score_payload_skips_the_candidate_with_a_message(self):
-        candidate = quadrant.Candidate(symbol="A", description="Alpha")
-
-        for scorer, payload, score_label in (
-            (quadrant.score_growth, "not-a-number", "growth score"),
-            (quadrant.score_valuation, [], "valuation score"),
-        ):
-            with (
-                self.subTest(scorer=scorer.__name__),
-                patch("quadrant.fetch_score", return_value=payload),
-                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+    def test_invalid_payloads_skip_the_candidate(self):
+        candidate = quadrant.Candidate("A", "Alpha")
+        for scorer in (quadrant.score_growth, quadrant.score_valuation):
+            for payload in (
+                "invalid",
+                [],
+                [1],
+                [1, 2, 3],
+                ["bad", 1],
+                [float("nan"), 1],
+                [1, float("inf")],
+                [True, None],
             ):
-                self.assertIsNone(scorer(candidate))
+                with (
+                    self.subTest(scorer=scorer.__name__, payload=payload),
+                    patch("quadrant.fetch_score", return_value=payload),
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                ):
+                    self.assertIsNone(scorer(candidate))
+                    self.assertIn("Skipping A", stderr.getvalue())
 
-            self.assertIn(f"Skipping A {score_label}:", stderr.getvalue())
-
-    def test_growth_applies_the_bitcoin_multiplier_only_to_bitcoin(self):
-        bitcoin = quadrant.Candidate(symbol="BTC", description="Bitcoin", market="c")
-        stock = quadrant.Candidate(symbol="A", description="Alpha")
-
+    def test_growth_applies_bitcoin_multiplier_and_preserves_null(self):
         with (
             patch.object(quadrant, "BTC_GROWTH_MULTIPLIER", 2),
-            patch("quadrant.fetch_score", return_value=3),
+            patch("quadrant.fetch_score", return_value=[-3, None]),
         ):
-            bitcoin_result = quadrant.score_growth(bitcoin)
-            stock_result = quadrant.score_growth(stock)
+            bitcoin = quadrant.score_growth(
+                quadrant.Candidate("BTC", "Bitcoin", market="c")
+            )
+            stock = quadrant.score_growth(quadrant.Candidate("A", "Alpha"))
+        assert bitcoin is not None and stock is not None
+        self.assertEqual(bitcoin.revenue_growth, -6)
+        self.assertIsNone(bitcoin.eps_growth)
+        self.assertEqual(stock.revenue_growth, -3)
 
-        assert bitcoin_result is not None
-        assert stock_result is not None
-        self.assertEqual(bitcoin_result.growth_score, 6)
-        self.assertEqual(stock_result.growth_score, 3)
-
-    def test_growth_scoring_can_be_disabled(self):
-        candidates = [
-            quadrant.Candidate(symbol="A", description="Alpha"),
-            quadrant.Candidate(symbol="B", description="Beta"),
-        ]
-
-        with (
-            patch.object(quadrant, "GROWTH_ENABLED", False),
-            patch("quadrant.score_growth") as score_growth,
-        ):
+    def test_growth_scoring_always_runs_and_skips_failed_requests(self):
+        candidates = [quadrant.Candidate("A", "Alpha"), quadrant.Candidate("B", "Beta")]
+        with patch("quadrant.score_growth", side_effect=[candidates[0], None]) as score:
             result = quadrant.score_growth_candidates(candidates)
-
-        score_growth.assert_not_called()
+        self.assertEqual(result, candidates[:1])
         self.assertEqual(
-            result,
-            [
-                quadrant.Candidate(symbol="A", description="Alpha", growth_score=1),
-                quadrant.Candidate(symbol="B", description="Beta", growth_score=1),
-            ],
+            score.call_args_list, [call(candidate) for candidate in candidates]
         )
 
 
 class RankingTests(unittest.TestCase):
-    def test_rank_candidates_sums_independent_metric_ranks(self):
+    def test_independent_growth_ranks_average_available_metrics(self):
         candidates = [
-            quadrant.Candidate(
-                symbol="A", description="Alpha", growth_score=100, valuation_score=0.1
-            ),
-            quadrant.Candidate(
-                symbol="B", description="Beta", growth_score=2, valuation_score=0.2
-            ),
-            quadrant.Candidate(
-                symbol="C", description="Charlie", growth_score=1, valuation_score=0.15
-            ),
-            quadrant.Candidate(
-                symbol="D", description="Delta", growth_score=0.5, valuation_score=0.05
-            ),
+            quadrant.Candidate("A", "Alpha", revenue_growth=100, eps_growth=-2),
+            quadrant.Candidate("B", "Beta", revenue_growth=2, eps_growth=0),
+            quadrant.Candidate("C", "Charlie", revenue_growth=-1),
+            quadrant.Candidate("D", "Delta", eps_growth=-3),
+            quadrant.Candidate("E", "Empty"),
         ]
-
+        result = quadrant.combine_metric_ranks(
+            candidates, ("revenue_growth", "eps_growth"), "growth_rank"
+        )
         self.assertEqual(
-            [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
-            ["B", "A", "C", "D"],
+            {candidate.symbol: candidate.growth_rank for candidate in result},
+            {"A": 1.5, "B": 1.5, "C": 3, "D": 3},
         )
 
-    def test_metric_ranks_assigns_average_rank_to_equal_scores(self):
+    def test_metric_ranks_average_ties_and_ignore_null(self):
         candidates = [
-            quadrant.Candidate(
-                symbol="A", description="Alpha", growth_score=10, valuation_score=5
-            ),
-            quadrant.Candidate(
-                symbol="B", description="Beta", growth_score=10, valuation_score=4
-            ),
-            quadrant.Candidate(
-                symbol="C", description="Charlie", growth_score=5, valuation_score=4
-            ),
+            quadrant.Candidate("A", "Alpha", revenue_growth=0),
+            quadrant.Candidate("B", "Beta", revenue_growth=0),
+            quadrant.Candidate("C", "Charlie", revenue_growth=-5),
+            quadrant.Candidate("D", "Missing"),
         ]
-
         self.assertEqual(
-            quadrant.metric_ranks(candidates, "growth_score"),
+            quadrant.metric_ranks(candidates, "revenue_growth"),
             {candidates[0]: 1.5, candidates[1]: 1.5, candidates[2]: 3},
         )
+
+    def test_growth_selection_rounds_up_and_keeps_at_least_one(self):
+        for count in (0, 1, 2, 3, 4, 5):
+            candidates = [
+                quadrant.Candidate(str(i), str(i), revenue_growth=-i)
+                for i in reversed(range(count))
+            ]
+            candidates.append(quadrant.Candidate("missing", "Missing"))
+            with self.subTest(count=count):
+                selected = quadrant.select_growth_candidates(candidates)
+                self.assertEqual(
+                    [candidate.symbol for candidate in selected],
+                    [str(i) for i in range((count + 1) // 2)],
+                )
+
+    def test_growth_selection_breaks_cutoff_ties_alphabetically(self):
+        candidates = [
+            quadrant.Candidate(symbol, symbol, eps_growth=0)
+            for symbol in ("D", "C", "B", "A")
+        ]
         self.assertEqual(
-            quadrant.metric_ranks(candidates, "valuation_score"),
-            {candidates[0]: 1, candidates[1]: 2.5, candidates[2]: 2.5},
+            [
+                candidate.symbol
+                for candidate in quadrant.select_growth_candidates(candidates)
+            ],
+            ["A", "B"],
         )
 
-    def test_rank_candidates_uses_symbol_to_break_a_combined_rank_tie(self):
+    def test_final_ranking_reranks_groups_with_equal_weight(self):
         candidates = [
-            quadrant.Candidate(
-                symbol="B", description="Beta", growth_score=5, valuation_score=10
-            ),
-            quadrant.Candidate(
-                symbol="A", description="Alpha", growth_score=10, valuation_score=5
-            ),
+            quadrant.Candidate("Z", "Zulu", growth_rank=1, ps_score=0, pe_score=-5),
+            quadrant.Candidate("B", "Beta", growth_rank=20, ps_score=-1, pe_score=5),
+            quadrant.Candidate("A", "Alpha", growth_rank=30, ps_score=2, pe_score=0),
         ]
+        # Growth ranks 1,2,3 and valuation ranks 3,2,1 tie; symbols decide.
+        # Adding original growth values would incorrectly produce Z,B,A.
+        self.assertEqual(
+            [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
+            ["A", "B", "Z"],
+        )
 
+    def test_final_ranking_uses_either_score_and_excludes_only_missing_groups(self):
+        candidates = [
+            quadrant.Candidate("A", "Alpha", growth_rank=1, ps_score=-2),
+            quadrant.Candidate("B", "Beta", growth_rank=2, pe_score=0),
+            quadrant.Candidate("C", "No valuation", growth_rank=3),
+            quadrant.Candidate("D", "No growth", ps_score=10, pe_score=10),
+        ]
         self.assertEqual(
             [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
             ["A", "B"],
         )
+        self.assertEqual(quadrant.rank_candidates([]), [])
 
-    def test_rank_candidates_excludes_incomplete_and_non_positive_scores(self):
+    def test_valuation_ranks_average_available_components(self):
         candidates = [
-            quadrant.Candidate(
-                symbol="A", description="Alpha", growth_score=2, valuation_score=2
-            ),
-            quadrant.Candidate(symbol="B", description="Incomplete", growth_score=2),
-            quadrant.Candidate(
-                symbol="C", description="Zero", growth_score=0, valuation_score=2
-            ),
-            quadrant.Candidate(
-                symbol="D", description="Negative", growth_score=2, valuation_score=-1
-            ),
+            quadrant.Candidate("A", "Alpha", ps_score=-1, pe_score=0),
+            quadrant.Candidate("B", "Beta", ps_score=0, pe_score=-1),
+            quadrant.Candidate("C", "Charlie", ps_score=-2),
+            quadrant.Candidate("D", "Delta", pe_score=-2),
         ]
-
+        result = quadrant.combine_metric_ranks(
+            candidates, ("ps_score", "pe_score"), "valuation_rank"
+        )
         self.assertEqual(
-            [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
-            ["A"],
+            {candidate.symbol: candidate.valuation_rank for candidate in result},
+            {"A": 1.5, "B": 1.5, "C": 3, "D": 3},
         )
 
 
 class MainTests(unittest.TestCase):
-    def test_main_writes_only_positive_complete_candidates_by_combined_rank(self):
-        source_candidates = [quadrant.Candidate(symbol="source", description="Source")]
-        scored_candidates = [
-            quadrant.Candidate(
-                symbol="A", description="Alpha", growth_score=2, valuation_score=3
-            ),
-            quadrant.Candidate(
-                symbol="B",
-                description="Beta, Inc.",
-                growth_score=3,
-                valuation_score=3,
-            ),
-            quadrant.Candidate(symbol="C", description="Incomplete", growth_score=2),
-            quadrant.Candidate(
-                symbol="D", description="Zero", growth_score=1, valuation_score=0
-            ),
-            quadrant.Candidate(
-                symbol="E", description="Negative", growth_score=-1, valuation_score=2
-            ),
-        ]
+    def test_growth_failures_and_missing_growths_are_removed_before_halving(self):
+        for eligible_count in (4, 5):
+            symbols = "ABCDE"[:eligible_count]
+            candidates = [
+                quadrant.Candidate(symbol, symbol) for symbol in symbols + "FMN"
+            ]
+            growths = {symbol: [-i - 1, None] for i, symbol in enumerate(symbols)}
+            growths.update({"M": [1], "N": [None, None]})
+
+            def fetch(path, params):
+                if path == "growths":
+                    if params["symbol"] == "F":
+                        raise RuntimeError("growth unavailable")
+                    return growths[params["symbol"]]
+                return [0, None]
+
+            with (
+                self.subTest(eligible_count=eligible_count),
+                patch("quadrant.load_dotenv"),
+                patch("quadrant.load_candidates", return_value=candidates),
+                patch("quadrant.fetch_score", side_effect=fetch) as fetch_score,
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            ):
+                self.assertEqual(quadrant.main(), 0)
+                expected = list("AB" if eligible_count == 4 else "ABC")
+                self.assertCountEqual(
+                    [
+                        request.args[1]["symbol"]
+                        for request in fetch_score.call_args_list
+                        if request.args[0] == "growths"
+                    ],
+                    list(symbols + "FMN"),
+                )
+                self.assertEqual(
+                    [
+                        request.args[1]["symbol"]
+                        for request in fetch_score.call_args_list
+                        if request.args[0] == "scores"
+                    ],
+                    expected,
+                )
+                self.assertEqual(
+                    stdout.getvalue(),
+                    "".join(f"{symbol},{symbol}\n" for symbol in expected),
+                )
+                self.assertIn(
+                    "Skipping F growth score: growth unavailable", stderr.getvalue()
+                )
+                self.assertIn("Skipping M growth score:", stderr.getvalue())
+
+    def test_conflicting_metrics_determine_selection_and_a_clear_final_winner(self):
+        candidates = [quadrant.Candidate(symbol, symbol) for symbol in "HGFEDCBA"]
+        growths = {
+            "A": [10000, 90],
+            "B": [6, 100],
+            "C": [5, 70],
+            "D": [4, 60],
+            "E": [3, 80],
+            "F": [2, 50],
+            "G": [1, 30],
+            "H": [0, 40],
+        }
+        scores = {
+            "A": [10000, -100],
+            "B": [2, 100],
+            "C": [1, 10],
+            "E": [0, 1],
+        }
+
+        # Growth averages A=1.5, B=1.5, C=3.5, E=4 beat D=4.5.
+        # Valuation averages A=2.5, B=1.5, C=2.5, E=3.5.
+        # Final reranked sums: B=2.5, A=4, C=5.5, E=8, with no ties.
+        # Averaging raw scores would incorrectly put A ahead of B.
+        def fetch(path, params):
+            return (growths if path == "growths" else scores)[params["symbol"]]
 
         with (
             patch("quadrant.load_dotenv"),
-            patch("quadrant.load_candidates", return_value=source_candidates),
-            patch(
-                "quadrant.score_growth_candidates", return_value=scored_candidates
-            ) as score_growth,
-            patch(
-                "quadrant.score_all_valuations", return_value=scored_candidates
-            ) as score_valuations,
+            patch("quadrant.load_candidates", return_value=candidates),
+            patch("quadrant.fetch_score", side_effect=fetch) as fetch_score,
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            self.assertEqual(quadrant.main(), 0)
+        self.assertEqual(
+            [
+                request.args[1]["symbol"]
+                for request in fetch_score.call_args_list
+                if request.args[0] == "scores"
+            ],
+            ["A", "B", "C", "E"],
+        )
+        self.assertEqual(stdout.getvalue(), "B,B\nA,A\nC,C\nE,E\n")
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_main_scores_only_best_half_without_backfilling_and_writes_csv(self):
+        candidates = [
+            quadrant.Candidate(symbol, description)
+            for symbol, description in (
+                ("A", "Alpha"),
+                ("B", "Beta, Inc."),
+                ("C", "Charlie"),
+                ("D", "Delta"),
+                ("E", "Echo"),
+                ("N", "No growth"),
+            )
+        ]
+        growths = {symbol: [5 - i, None] for i, symbol in enumerate("ABCDE")}
+        growths["N"] = [None, None]
+        scores = {"A": [None, None], "B": [-2, 0], "C": [0, None]}
+
+        def fetch(path, params):
+            return (growths if path == "growths" else scores)[params["symbol"]]
+
+        with (
+            patch("quadrant.load_dotenv"),
+            patch("quadrant.load_candidates", return_value=candidates),
+            patch("quadrant.fetch_score", side_effect=fetch) as fetch_score,
             patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
             self.assertEqual(quadrant.main(), 0)
+        self.assertEqual(
+            [
+                request.args[1]["symbol"]
+                for request in fetch_score.call_args_list
+                if request.args[0] == "scores"
+            ],
+            ["A", "B", "C"],
+        )
+        self.assertEqual(stdout.getvalue(), 'B,"Beta, Inc."\nC,Charlie\n')
 
-        score_growth.assert_called_once_with(source_candidates)
-        score_valuations.assert_called_once_with(scored_candidates)
-        self.assertEqual(stdout.getvalue(), 'B,"Beta, Inc."\nA,Alpha\n')
+    def test_main_valuation_failure_does_not_backfill(self):
+        candidates = [quadrant.Candidate(symbol, symbol) for symbol in "ABCD"]
+
+        def fetch(path, params):
+            if path == "growths":
+                return [4 - "ABCD".index(params["symbol"]), None]
+            raise RuntimeError("unavailable")
+
+        with (
+            patch("quadrant.load_dotenv"),
+            patch("quadrant.load_candidates", return_value=candidates),
+            patch("quadrant.fetch_score", side_effect=fetch) as fetch_score,
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(quadrant.main(), 0)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(
+            [
+                request.args[1]["symbol"]
+                for request in fetch_score.call_args_list
+                if request.args[0] == "scores"
+            ],
+            ["A", "B"],
+        )
 
 
 class IntradayLiquidityTests(unittest.TestCase):

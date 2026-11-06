@@ -4,10 +4,11 @@ import datetime as dt
 import math
 import os
 import sys
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -19,7 +20,6 @@ from config import (
     CANDIDATE_POOL_MULTIPLIER,
     FINMIND_THREADS,
     GROWTH_CONCURRENCY,
-    GROWTH_ENABLED,
     LAST_N,
     MARKET,
     RESULT_LIMIT,
@@ -261,19 +261,18 @@ def tradingview_payload(market: MarketConfig, limit: int) -> dict:
     }
 
 
-def mean(values: Iterable[float | None]) -> float:
-    values = [value for value in values if value is not None]
-    return sum(values) / len(values)
-
-
 @dataclass(frozen=True)
 class Candidate:
     symbol: str
     description: str
     market: str = "u"
     trading_dollars: float | None = None
-    growth_score: float | None = None
-    valuation_score: float | None = None
+    revenue_growth: float | None = None
+    eps_growth: float | None = None
+    ps_score: float | None = None
+    pe_score: float | None = None
+    growth_rank: float | None = None
+    valuation_rank: float | None = None
 
 
 def adjusted_growth_score(symbol: str, score: float) -> float:
@@ -304,32 +303,45 @@ def report_scoring_failure(
 def score_candidate(
     candidate: Candidate,
     score_name: str,
-    score_field: str,
-    get_score: Callable[[], float],
+    score_fields: tuple[str, str],
+    get_score: Callable[[], Any],
 ) -> Candidate | None:
     try:
-        score = get_score()
+        scores = get_score()
+        if not isinstance(scores, (list, tuple)) or len(scores) != 2:
+            raise ValueError("expected two nullable numeric values")
+        for score in scores:
+            if score is not None and (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(score)
+            ):
+                raise ValueError("expected finite numeric values or null")
+        return replace(candidate, **dict(zip(score_fields, scores, strict=True)))
     except Exception as exc:
         report_scoring_failure(candidate, score_name, exc)
         return None
 
-    return replace(candidate, **{score_field: score})
-
 
 def score_growth(candidate: Candidate) -> Candidate | None:
-    return score_candidate(
+    scored = score_candidate(
         candidate,
         "growth score",
-        "growth_score",
-        lambda: adjusted_growth_score(
-            candidate.symbol,
-            float(
-                fetch_score(
-                    "growth",
-                    {"market": candidate.market, "symbol": candidate.symbol},
-                )
-            ),
+        ("revenue_growth", "eps_growth"),
+        lambda: fetch_score(
+            "growths",
+            {"market": candidate.market, "symbol": candidate.symbol},
         ),
+    )
+    if scored is None:
+        return None
+    return replace(
+        scored,
+        **{
+            field: adjusted_growth_score(candidate.symbol, value)
+            for field in ("revenue_growth", "eps_growth")
+            if (value := getattr(scored, field)) is not None
+        },
     )
 
 
@@ -337,17 +349,15 @@ def score_valuation(candidate: Candidate) -> Candidate | None:
     return score_candidate(
         candidate,
         "valuation score",
-        "valuation_score",
-        lambda: mean(
-            fetch_score(
-                "scores",
-                {
-                    "market": candidate.market,
-                    "symbol": candidate.symbol,
-                    "q": Q,
-                    "u": VALUATION_SCORE_UPPER,
-                },
-            )
+        ("ps_score", "pe_score"),
+        lambda: fetch_score(
+            "scores",
+            {
+                "market": candidate.market,
+                "symbol": candidate.symbol,
+                "q": Q,
+                "u": VALUATION_SCORE_UPPER,
+            },
         ),
     )
 
@@ -542,14 +552,10 @@ def load_top_candidates(
 
 
 def score_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
-    attempted = list(candidates)
-    if not GROWTH_ENABLED:
-        return [replace(candidate, growth_score=1) for candidate in attempted]
-
     with ThreadPoolExecutor(max_workers=GROWTH_CONCURRENCY) as executor:
         scored = [
             scored_candidate
-            for scored_candidate in executor.map(score_growth, attempted)
+            for scored_candidate in executor.map(score_growth, candidates)
             if scored_candidate is not None
         ]
     return scored
@@ -594,12 +600,16 @@ def write_results(results: Iterable[Candidate]) -> None:
 
 
 def metric_ranks(
-    candidates: Iterable[Candidate], score_field: str
+    candidates: Iterable[Candidate], score_field: str, *, reverse: bool = True
 ) -> dict[Candidate, float]:
     ordered = sorted(
-        candidates,
+        (
+            candidate
+            for candidate in candidates
+            if getattr(candidate, score_field) is not None
+        ),
         key=lambda candidate: getattr(candidate, score_field),
-        reverse=True,
+        reverse=reverse,
     )
     ranks = {}
     start = 0
@@ -616,17 +626,37 @@ def metric_ranks(
     return ranks
 
 
+def combine_metric_ranks(
+    candidates: Iterable[Candidate], fields: tuple[str, str], rank_field: str
+) -> list[Candidate]:
+    candidates = list(candidates)
+    ranks = [metric_ranks(candidates, field) for field in fields]
+    combined = []
+    for candidate in candidates:
+        available = [rank[candidate] for rank in ranks if candidate in rank]
+        if available:
+            combined.append(
+                replace(candidate, **{rank_field: sum(available) / len(available)})
+            )
+    return combined
+
+
+def select_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
+    ranked = combine_metric_ranks(
+        candidates, ("revenue_growth", "eps_growth"), "growth_rank"
+    )
+    ranked.sort(key=lambda candidate: (candidate.growth_rank, candidate.symbol))
+    return ranked[: (len(ranked) + 1) // 2]
+
+
 def rank_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
-    eligible = [
-        candidate
-        for candidate in candidates
-        if candidate.growth_score is not None
-        and candidate.growth_score > 0
-        and candidate.valuation_score is not None
-        and candidate.valuation_score > 0
-    ]
-    growth_ranks = metric_ranks(eligible, "growth_score")
-    valuation_ranks = metric_ranks(eligible, "valuation_score")
+    eligible = combine_metric_ranks(
+        (candidate for candidate in candidates if candidate.growth_rank is not None),
+        ("ps_score", "pe_score"),
+        "valuation_rank",
+    )
+    growth_ranks = metric_ranks(eligible, "growth_rank", reverse=False)
+    valuation_ranks = metric_ranks(eligible, "valuation_rank", reverse=False)
     return sorted(
         eligible,
         key=lambda candidate: (
@@ -640,7 +670,8 @@ def main() -> int:
     load_dotenv()
 
     growth_candidates = score_growth_candidates(load_candidates())
-    scored_candidates = score_all_valuations(growth_candidates)
+    selected_candidates = select_growth_candidates(growth_candidates)
+    scored_candidates = score_all_valuations(selected_candidates)
     ranked_candidates = rank_candidates(scored_candidates)
 
     write_results(ranked_candidates)
