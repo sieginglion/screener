@@ -34,9 +34,12 @@ uv run python quadrant.py > 16.csv
 The screener ranks revenue and EPS growth separately, averages their available
 ranks, and requests PS and PE scores only for the best-growth half (rounded up).
 It combines PS and PE ranks the same way, then reranks growth and valuation among
-the survivors and adds those ranks with equal weight. Zero and negative values
-are valid; a missing metric uses the other metric's rank, and candidates missing
-both metrics in either group are omitted.
+the survivors and adds those ranks with equal weight. Higher growth and higher
+valuation scores receive lower numeric ranks (1 is best); lower valuation means
+a higher score. Score values from the service are used without validation. The
+`/scores` request passes `market`, `symbol`, and `q`. A missing metric uses the
+other metric's rank, and candidates missing both metrics in either group are
+omitted.
 
 Create an S&P 500 correlation-map video using BlackRock's latest S&P 500
 holdings export, or for tickers in the first column of a headerless CSV (bubble

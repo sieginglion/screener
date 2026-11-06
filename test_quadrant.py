@@ -468,23 +468,32 @@ class CandidateLoadingTests(unittest.TestCase):
 
 
 class GrowthScoringTests(unittest.TestCase):
-    def test_all_nullable_signed_metric_pairs_are_accepted_and_ranked(self):
+    def test_nullable_growth_and_valuation_pairs_are_accepted_and_ranked(self):
         cases = (
-            (quadrant.score_growth, ("revenue_growth", "eps_growth"), "growth_rank"),
-            (quadrant.score_valuation, ("ps_score", "pe_score"), "valuation_rank"),
+            (
+                quadrant.score_growth,
+                ("revenue_growth", "eps_growth"),
+                "growth_rank",
+                (-2, 0, 2),
+                {-1.0: 3.0, 0.0: 2.5, 1.0: 2.0},
+            ),
+            (
+                quadrant.score_valuation,
+                ("ps_score", "pe_score"),
+                "valuation_rank",
+                (0, 0.5, 0.75),
+                {0.0: 3.5, 0.5: 2.5, 0.9: 1.0},
+            ),
         )
-        for scorer, fields, rank_field in cases:
+        for scorer, fields, rank_field, reference_values, expected_ranks in cases:
             references = [
                 replace(
                     quadrant.Candidate(symbol, symbol), **dict.fromkeys(fields, value)
                 )
-                for symbol, value in (("low", -2), ("zero", 0), ("high", 2))
+                for symbol, value in zip(("low", "middle", "high"), reference_values)
             ]
-            # With reference values -2, 0, 2: -1 ranks third, 0 ties at
-            # ranks 2 and 3, and +1 ranks second. Higher values rank better.
-            expected_ranks = {-1: 3, 0: 2.5, 1: 2}
-            for first in (None, -1, 0, 1):
-                for second in (None, -1, 0, 1):
+            for first in (None, *expected_ranks):
+                for second in (None, *expected_ranks):
                     with (
                         self.subTest(scorer=scorer.__name__, pair=(first, second)),
                         patch("quadrant.fetch_score", return_value=[first, second]),
@@ -517,7 +526,7 @@ class GrowthScoringTests(unittest.TestCase):
 
     def test_scores_are_kept_on_the_same_candidate(self):
         candidate = quadrant.Candidate("A", "Alpha", trading_dollars=123)
-        with patch("quadrant.fetch_score", side_effect=[[2, -1], [0, None]]):
+        with patch("quadrant.fetch_score", side_effect=[[2.0, -1.0], [0, None]]):
             grown = quadrant.score_growth(candidate)
             assert grown is not None
             scored = quadrant.score_valuation(grown)
@@ -527,15 +536,17 @@ class GrowthScoringTests(unittest.TestCase):
                 "A",
                 "Alpha",
                 trading_dollars=123,
-                revenue_growth=2,
-                eps_growth=-1,
+                revenue_growth=2.0,
+                eps_growth=-1.0,
                 ps_score=0,
             ),
         )
 
     def test_scoring_uses_the_expected_endpoints_and_parameters(self):
         candidate = quadrant.Candidate("A", "Alpha")
-        with patch("quadrant.fetch_score", return_value=[None, -2]) as fetch:
+        with patch(
+            "quadrant.fetch_score", side_effect=[[None, -2], [None, 0.75]]
+        ) as fetch:
             grown = quadrant.score_growth(candidate)
             scored = quadrant.score_valuation(candidate)
         self.assertEqual(
@@ -548,16 +559,15 @@ class GrowthScoringTests(unittest.TestCase):
                         "market": "u",
                         "symbol": "A",
                         "q": quadrant.Q,
-                        "u": quadrant.VALUATION_SCORE_UPPER,
                     },
                 ),
             ],
         )
         assert grown is not None and scored is not None
         self.assertIsNone(grown.revenue_growth)
-        self.assertEqual(grown.eps_growth, -2)
+        self.assertEqual(grown.eps_growth, -2.0)
         self.assertIsNone(scored.ps_score)
-        self.assertEqual(scored.pe_score, -2)
+        self.assertEqual(scored.pe_score, 0.75)
 
     def test_scoring_failure_skips_the_candidate_with_a_message(self):
         candidate = quadrant.Candidate("A", "Alpha")
@@ -575,7 +585,7 @@ class GrowthScoringTests(unittest.TestCase):
                     stderr.getvalue(), f"Skipping A {label}: unavailable\n"
                 )
 
-    def test_invalid_payloads_skip_the_candidate(self):
+    def test_unusable_score_pairs_skip_the_candidate(self):
         candidate = quadrant.Candidate("A", "Alpha")
         for scorer in (quadrant.score_growth, quadrant.score_valuation):
             for payload in (
@@ -583,10 +593,6 @@ class GrowthScoringTests(unittest.TestCase):
                 [],
                 [1],
                 [1, 2, 3],
-                ["bad", 1],
-                [float("nan"), 1],
-                [1, float("inf")],
-                [True, None],
             ):
                 with (
                     self.subTest(scorer=scorer.__name__, payload=payload),
@@ -599,7 +605,7 @@ class GrowthScoringTests(unittest.TestCase):
     def test_growth_applies_bitcoin_multiplier_and_preserves_null(self):
         with (
             patch.object(quadrant, "BTC_GROWTH_MULTIPLIER", 2),
-            patch("quadrant.fetch_score", return_value=[-3, None]),
+            patch("quadrant.fetch_score", return_value=[-3.0, None]),
         ):
             bitcoin = quadrant.score_growth(
                 quadrant.Candidate("BTC", "Bitcoin", market="c")
@@ -678,9 +684,11 @@ class RankingTests(unittest.TestCase):
 
     def test_final_ranking_reranks_groups_with_equal_weight(self):
         candidates = [
-            quadrant.Candidate("Z", "Zulu", growth_rank=1, ps_score=0, pe_score=-5),
-            quadrant.Candidate("B", "Beta", growth_rank=20, ps_score=-1, pe_score=5),
-            quadrant.Candidate("A", "Alpha", growth_rank=30, ps_score=2, pe_score=0),
+            quadrant.Candidate("Z", "Zulu", growth_rank=1, ps_score=0.2, pe_score=0),
+            quadrant.Candidate("B", "Beta", growth_rank=20, ps_score=0.1, pe_score=0.4),
+            quadrant.Candidate(
+                "A", "Alpha", growth_rank=30, ps_score=0.3, pe_score=0.2
+            ),
         ]
         # Growth ranks 1,2,3 and valuation ranks 3,2,1 tie; symbols decide.
         # Adding original growth values would incorrectly produce Z,B,A.
@@ -691,10 +699,10 @@ class RankingTests(unittest.TestCase):
 
     def test_final_ranking_uses_either_score_and_excludes_only_missing_groups(self):
         candidates = [
-            quadrant.Candidate("A", "Alpha", growth_rank=1, ps_score=-2),
-            quadrant.Candidate("B", "Beta", growth_rank=2, pe_score=0),
+            quadrant.Candidate("A", "Alpha", growth_rank=1, ps_score=0),
+            quadrant.Candidate("B", "Beta", growth_rank=2, pe_score=0.2),
             quadrant.Candidate("C", "No valuation", growth_rank=3),
-            quadrant.Candidate("D", "No growth", ps_score=10, pe_score=10),
+            quadrant.Candidate("D", "No growth", ps_score=0.9, pe_score=0.9),
         ]
         self.assertEqual(
             [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
@@ -704,10 +712,10 @@ class RankingTests(unittest.TestCase):
 
     def test_valuation_ranks_average_available_components(self):
         candidates = [
-            quadrant.Candidate("A", "Alpha", ps_score=-1, pe_score=0),
-            quadrant.Candidate("B", "Beta", ps_score=0, pe_score=-1),
-            quadrant.Candidate("C", "Charlie", ps_score=-2),
-            quadrant.Candidate("D", "Delta", pe_score=-2),
+            quadrant.Candidate("A", "Alpha", ps_score=0.5, pe_score=0.9),
+            quadrant.Candidate("B", "Beta", ps_score=0.9, pe_score=0.5),
+            quadrant.Candidate("C", "Charlie", ps_score=0),
+            quadrant.Candidate("D", "Delta", pe_score=0),
         ]
         result = quadrant.combine_metric_ranks(
             candidates, ("ps_score", "pe_score"), "valuation_rank"
@@ -725,7 +733,7 @@ class MainTests(unittest.TestCase):
             candidates = [
                 quadrant.Candidate(symbol, symbol) for symbol in symbols + "FMN"
             ]
-            growths = {symbol: [-i - 1, None] for i, symbol in enumerate(symbols)}
+            growths = {symbol: [-i - 1.0, None] for i, symbol in enumerate(symbols)}
             growths.update({"M": [1], "N": [None, None]})
 
             def fetch(path, params):
@@ -773,20 +781,20 @@ class MainTests(unittest.TestCase):
     def test_conflicting_metrics_determine_selection_and_a_clear_final_winner(self):
         candidates = [quadrant.Candidate(symbol, symbol) for symbol in "HGFEDCBA"]
         growths = {
-            "A": [10000, 90],
-            "B": [6, 100],
-            "C": [5, 70],
-            "D": [4, 60],
-            "E": [3, 80],
-            "F": [2, 50],
-            "G": [1, 30],
-            "H": [0, 40],
+            "A": [10000.0, 90.0],
+            "B": [6.0, 100.0],
+            "C": [5.0, 70.0],
+            "D": [4.0, 60.0],
+            "E": [3.0, 80.0],
+            "F": [2.0, 50.0],
+            "G": [1.0, 30.0],
+            "H": [0.0, 40.0],
         }
         scores = {
-            "A": [10000, -100],
-            "B": [2, 100],
-            "C": [1, 10],
-            "E": [0, 1],
+            "A": [0.99, 0],
+            "B": [0.02, 0.9],
+            "C": [0.01, 0.1],
+            "E": [0, 0.01],
         }
 
         # Growth averages A=1.5, B=1.5, C=3.5, E=4 beat D=4.5.
@@ -827,9 +835,9 @@ class MainTests(unittest.TestCase):
                 ("N", "No growth"),
             )
         ]
-        growths = {symbol: [5 - i, None] for i, symbol in enumerate("ABCDE")}
+        growths = {symbol: [5.0 - i, None] for i, symbol in enumerate("ABCDE")}
         growths["N"] = [None, None]
-        scores = {"A": [None, None], "B": [-2, 0], "C": [0, None]}
+        scores = {"A": [None, None], "B": [0, 0.5], "C": [0.5, None]}
 
         def fetch(path, params):
             return (growths if path == "growths" else scores)[params["symbol"]]
@@ -856,7 +864,7 @@ class MainTests(unittest.TestCase):
 
         def fetch(path, params):
             if path == "growths":
-                return [4 - "ABCD".index(params["symbol"]), None]
+                return [4.0 - "ABCD".index(params["symbol"]), None]
             raise RuntimeError("unavailable")
 
         with (

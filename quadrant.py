@@ -24,7 +24,6 @@ from config import (
     MARKET,
     RESULT_LIMIT,
     TV_SORT_WINDOW,
-    VALUATION_SCORE_UPPER,
     Q,
 )
 
@@ -308,15 +307,6 @@ def score_candidate(
 ) -> Candidate | None:
     try:
         scores = get_score()
-        if not isinstance(scores, (list, tuple)) or len(scores) != 2:
-            raise ValueError("expected two nullable numeric values")
-        for score in scores:
-            if score is not None and (
-                isinstance(score, bool)
-                or not isinstance(score, (int, float))
-                or not math.isfinite(score)
-            ):
-                raise ValueError("expected finite numeric values or null")
         return replace(candidate, **dict(zip(score_fields, scores, strict=True)))
     except Exception as exc:
         report_scoring_failure(candidate, score_name, exc)
@@ -356,7 +346,6 @@ def score_valuation(candidate: Candidate) -> Candidate | None:
                 "market": candidate.market,
                 "symbol": candidate.symbol,
                 "q": Q,
-                "u": VALUATION_SCORE_UPPER,
             },
         ),
     )
