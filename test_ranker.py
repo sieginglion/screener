@@ -158,6 +158,32 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         result = await ranker.invoke_grok(client, "grok-test", "Question", ())
 
         self.assertEqual(result, "Grok result")
+        client.chat.create.assert_called_once_with(
+            model="grok-test",
+            tools=[],
+            reasoning_effort="xhigh",
+            service_tier="default",
+        )
+
+    async def test_grok_priority_requests_priority_service_tier(self):
+        client = MagicMock()
+        client.chat.create.return_value.sample = AsyncMock(
+            return_value=types.SimpleNamespace(
+                finish_reason="REASON_STOP", content="Grok result"
+            )
+        )
+
+        result = await ranker.invoke_grok(
+            client, "grok-test", "Question", (), priority=True
+        )
+
+        self.assertEqual(result, "Grok result")
+        client.chat.create.assert_called_once_with(
+            model="grok-test",
+            tools=[],
+            reasoning_effort="xhigh",
+            service_tier="priority",
+        )
 
     async def test_grok_rejects_unsuccessful_response_results(self):
         responses = [
@@ -614,7 +640,7 @@ class PromptBuilderTests(unittest.TestCase):
     def test_build_analysis_question_for_each_criterion(self):
         for name, expected in (
             ("moat", "What moats do they have?"),
-            ("pricing-power", "What pricing powers do they have?"),
+            ("power", "What pricing powers do they have?"),
         ):
             with self.subTest(criterion=name):
                 question = ranker.build_analysis_question(
@@ -661,7 +687,7 @@ Merge the responses into a coherent one. List any major conflicts.
     def test_build_ranking_question(self):
         for name, expected in (
             ("moat", "Rank them into 4 tiers by moat"),
-            ("pricing-power", "Rank them into 4 tiers by pricing power"),
+            ("power", "Rank them into 4 tiers by pricing power"),
         ):
             with self.subTest(criterion=name):
                 question = ranker.build_ranking_question(
@@ -676,12 +702,18 @@ Merge the responses into a coherent one. List any major conflicts.
 
 
 class ArgumentParsingTests(unittest.TestCase):
-    def test_default_criterion_is_moat(self):
+    def test_grok_priority_is_opt_in(self):
+        for flags, expected in (([], False), (["--grok-priority"], True)):
+            with self.subTest(flags=flags):
+                with patch.object(ranker.sys, "argv", ["ranker.py", *flags]):
+                    self.assertEqual(ranker.parse_args().grok_priority, expected)
+
+    def test_default_criterion_is_power(self):
         with patch.object(ranker.sys, "argv", ["ranker.py"]):
-            self.assertEqual(ranker.parse_args().criterion, "moat")
+            self.assertEqual(ranker.parse_args().criterion, "power")
 
     def test_each_criterion_can_be_selected(self):
-        for criterion in ("moat", "pricing-power"):
+        for criterion in ("moat", "power"):
             with self.subTest(criterion=criterion):
                 with patch.object(
                     ranker.sys, "argv", ["ranker.py", "--criterion", criterion]
@@ -751,7 +783,27 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             clients.claude, "claude-test", "Question", history
         )
         invoke_grok.assert_awaited_once_with(
-            clients.grok, "grok-test", "Question", history
+            clients.grok, "grok-test", "Question", history, priority=False
+        )
+
+    async def test_panel_passes_priority_to_grok(self):
+        panel = ranker.Panel(
+            models=ranker.Models("gpt-test", "gemini-test", "claude-test", "grok-test"),
+            clients=make_panel_clients(),
+            grok_priority=True,
+        )
+        with (
+            patch.object(ranker, "invoke_gpt", new=AsyncMock(return_value="GPT")),
+            patch.object(ranker, "invoke_gemini", new=AsyncMock(return_value="Gemini")),
+            patch.object(ranker, "invoke_claude", new=AsyncMock(return_value="Claude")),
+            patch.object(
+                ranker, "invoke_grok", new=AsyncMock(return_value="Grok")
+            ) as invoke_grok,
+        ):
+            await panel.query("Question")
+
+        invoke_grok.assert_awaited_once_with(
+            panel.clients.grok, "grok-test", "Question", (), priority=True
         )
 
     async def test_panel_query_propagates_provider_failures(self):
@@ -911,16 +963,20 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_uses_combined_batch_analyses_for_final_ranking(self):
         for criterion_name in ranker.CRITERIA:
-            with self.subTest(criterion=criterion_name):
-                await self.check_run_ranking(criterion_name)
+            for grok_priority in (False, True):
+                with self.subTest(
+                    criterion=criterion_name, grok_priority=grok_priority
+                ):
+                    await self.check_run_ranking(criterion_name, grok_priority)
 
-    async def check_run_ranking(self, criterion_name):
+    async def check_run_ranking(self, criterion_name, grok_priority):
         args = argparse.Namespace(
             criterion=criterion_name,
             gpt_model="gpt-test",
             gemini_model="gemini-test",
             grok_model="grok-test",
             claude_model="claude-test",
+            grok_priority=grok_priority,
         )
         models = ranker.Models(
             gpt="gpt-test",
@@ -1020,6 +1076,7 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(panel.models == models for panel in panels))
         self.assertTrue(all(panel.clients == clients for panel in panels))
+        self.assertTrue(all(panel.grok_priority == grok_priority for panel in panels))
         self.assertTrue(all(panel is deliberate_calls[0][0] for panel in panels))
         openai_factory.assert_called_once_with(api_key="openai-key")
         gemini_factory.assert_called_once_with(api_key="gemini-key")

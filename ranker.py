@@ -74,7 +74,7 @@ CRITERIA = {
         analysis_question="What moats do they have?",
         ranking_instruction="Rank them into 4 tiers by moat",
     ),
-    "pricing-power": Criterion(
+    "power": Criterion(
         name="pricing power",
         analysis_question="What pricing powers do they have?",
         ranking_instruction="Rank them into 4 tiers by pricing power",
@@ -133,6 +133,7 @@ class Panel:
 
     models: Models
     clients: PanelClients
+    grok_priority: bool = False
 
     async def query(
         self, question: str, history: Sequence[HistoryItem] = ()
@@ -142,7 +143,13 @@ class Panel:
             invoke_gpt(self.clients.gpt, self.models.gpt, question, history),
             invoke_gemini(self.clients.gemini, self.models.gemini, question, history),
             invoke_claude(self.clients.claude, self.models.claude, question, history),
-            invoke_grok(self.clients.grok, self.models.grok, question, history),
+            invoke_grok(
+                self.clients.grok,
+                self.models.grok,
+                question,
+                history,
+                priority=self.grok_priority,
+            ),
         )
         return PanelResponses(gpt=gpt, gemini=gemini, claude=claude, grok=grok)
 
@@ -244,10 +251,20 @@ async def invoke_gemini(
 
 
 async def invoke_grok(
-    client: AsyncClient, model: str, question: str, history: Sequence[HistoryItem]
+    client: AsyncClient,
+    model: str,
+    question: str,
+    history: Sequence[HistoryItem],
+    *,
+    priority: bool = False,
 ) -> str:
     try:
-        chat = client.chat.create(model=model, tools=[], reasoning_effort="xhigh")
+        chat = client.chat.create(
+            model=model,
+            tools=[],
+            reasoning_effort="xhigh",
+            service_tier="priority" if priority else "default",
+        )
         for prior_question, prior_answer in history:
             chat.append(user(prior_question))
             chat.append(assistant(prior_answer))
@@ -404,13 +421,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--criterion",
         choices=CRITERIA,
-        default="moat",
-        help="Ranking criterion (default: moat).",
+        default="power",
+        help="Ranking criterion (default: power).",
     )
     parser.add_argument("--gpt-model", default=MODEL_GPT_BASE)
     parser.add_argument("--gemini-model", default=MODEL_GEMINI)
     parser.add_argument("--claude-model", default=MODEL_CLAUDE)
     parser.add_argument("--grok-model", default=MODEL_GROK_BASE)
+    parser.add_argument(
+        "--grok-priority",
+        action="store_true",
+        help="Request xAI priority processing for Grok (premium token pricing).",
+    )
     return parser.parse_args()
 
 
@@ -465,7 +487,9 @@ async def run(args: argparse.Namespace) -> str:
             grok=grok_client,
         )
         return await rank_records(
-            records, Panel(models=models, clients=clients), CRITERIA[args.criterion]
+            records,
+            Panel(models=models, clients=clients, grok_priority=args.grok_priority),
+            CRITERIA[args.criterion],
         )
 
 

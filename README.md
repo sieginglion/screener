@@ -51,11 +51,18 @@ uv run python sp500_prices.py 16.csv
 ```
 
 Rank its moats or pricing power with OpenAI, Gemini, xAI, and Anthropic
-(moat is the default criterion):
+(pricing power is the default criterion):
 
 ```sh
 ./ranker.py --criterion moat < 16.csv > 16-moats.md
-./ranker.py --criterion pricing-power < 16.csv > 16-pricing.md
+./ranker.py --criterion power < 16.csv > 16-pricing.md
+```
+
+Add `--grok-priority` to request priority processing for Grok at xAI's premium
+token pricing. Standard processing is the default:
+
+```sh
+./ranker.py --grok-priority < 16.csv > 16-pricing.md
 ```
 
 Find 16 shared top-ranked tickers from two lists:
