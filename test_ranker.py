@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import io
 import os
@@ -40,7 +39,7 @@ def make_panel_clients():
 
 
 def make_panel_responses(label):
-    return ranker.PanelResponses(
+    return dict(
         gpt=f"GPT {label}",
         gemini=f"Gemini {label}",
         claude=f"Claude {label}",
@@ -663,7 +662,7 @@ class PromptBuilderTests(unittest.TestCase):
 
     def test_format_panel_responses_preserves_raw_text(self):
         prompt = ranker.format_panel_responses(
-            ranker.PanelResponses(
+            dict(
                 gpt=" GPT answer\nSecond line",
                 gemini="Gemini answer",
                 claude="Claude answer",
@@ -726,32 +725,47 @@ class ArgumentParsingTests(unittest.TestCase):
     def test_grok_priority_is_opt_in(self):
         for flags, expected in (([], False), (["--grok-priority"], True)):
             with self.subTest(flags=flags):
-                with patch.object(ranker.sys, "argv", ["ranker.py", *flags]):
+                with patch.object(ranker.sys, "argv", ["ranker.py", "-p", *flags]):
                     self.assertEqual(ranker.parse_args().grok_priority, expected)
 
-    def test_default_criterion_is_power(self):
-        with patch.object(ranker.sys, "argv", ["ranker.py"]):
+    def test_p_selects_pricing_power(self):
+        with patch.object(ranker.sys, "argv", ["ranker.py", "-p"]):
             self.assertEqual(ranker.parse_args().criterion, "power")
 
-    def test_each_criterion_can_be_selected(self):
-        for criterion in ("moat", "power"):
-            with self.subTest(criterion=criterion):
-                with patch.object(
-                    ranker.sys, "argv", ["ranker.py", "--criterion", criterion]
+    def test_m_selects_moat(self):
+        with patch.object(ranker.sys, "argv", ["ranker.py", "-m"]):
+            self.assertEqual(ranker.parse_args().criterion, "moat")
+
+    def test_exactly_one_criterion_is_required(self):
+        for flags in ([], ["--grok-priority"], ["-p", "-m"], ["-m", "-p"]):
+            with self.subTest(flags=flags):
+                with (
+                    patch.object(ranker.sys, "argv", ["ranker.py", *flags]),
+                    patch.object(ranker.sys, "stderr", io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
                 ):
-                    self.assertEqual(ranker.parse_args().criterion, criterion)
+                    ranker.parse_args()
+                self.assertEqual(raised.exception.code, 2)
 
-    def test_unknown_criterion_is_rejected(self):
-        with (
-            patch.object(ranker.sys, "argv", ["ranker.py", "--criterion", "unknown"]),
-            patch.object(ranker.sys, "stderr", io.StringIO()),
-            self.assertRaises(SystemExit) as raised,
+    def test_removed_flags_are_rejected(self):
+        for flag, value in (
+            ("--criterion", "moat"),
+            ("--gpt-model", "custom"),
+            ("--gemini-model", "custom"),
+            ("--claude-model", "custom"),
+            ("--grok-model", "custom"),
         ):
-            ranker.parse_args()
-        self.assertEqual(raised.exception.code, 2)
+            with self.subTest(flag=flag):
+                with (
+                    patch.object(ranker.sys, "argv", ["ranker.py", "-p", flag, value]),
+                    patch.object(ranker.sys, "stderr", io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    ranker.parse_args()
+                self.assertEqual(raised.exception.code, 2)
 
 
-class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
+class PanelQueryTests(unittest.IsolatedAsyncioTestCase):
     async def test_panel_query_returns_responses_in_provider_order(self):
         models = ranker.Models(
             gpt="gpt-test",
@@ -785,9 +799,10 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
         ):
             responses = await panel.query("Question", history)
 
+        self.assertEqual(tuple(responses), ("gpt", "gemini", "claude", "grok"))
         self.assertEqual(
             responses,
-            ranker.PanelResponses(
+            dict(
                 gpt="GPT answer",
                 gemini="Gemini answer",
                 claude="Claude answer",
@@ -857,101 +872,6 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             ):
                 await panel.query("Question")
 
-    async def test_deliberate_does_not_synthesize_after_panel_failure(self):
-        models = ranker.Models(
-            gpt="gpt-test",
-            gemini="gemini-test",
-            claude="claude-test",
-            grok="grok-test",
-        )
-        clients = make_panel_clients()
-        panel = ranker.Panel(models=models, clients=clients)
-
-        with (
-            patch.object(
-                ranker,
-                "invoke_gpt",
-                new=AsyncMock(return_value="GPT panel answer"),
-            ) as invoke_gpt,
-            patch.object(
-                ranker,
-                "invoke_gemini",
-                new=AsyncMock(
-                    side_effect=ranker.ModelInvocationError("Grok unavailable")
-                ),
-            ),
-            patch.object(
-                ranker,
-                "invoke_claude",
-                new=AsyncMock(return_value="Claude panel answer"),
-            ),
-            patch.object(
-                ranker,
-                "invoke_grok",
-                new=AsyncMock(return_value="Grok panel answer"),
-            ),
-        ):
-            with self.assertRaisesRegex(
-                ranker.ModelInvocationError, "Grok unavailable"
-            ):
-                await panel.deliberate("Question")
-
-        invoke_gpt.assert_awaited_once_with(clients.gpt, "gpt-test", "Question", ())
-
-    async def test_deliberate_synthesizes_full_provider_responses(self):
-        models = ranker.Models(
-            gpt="gpt-test",
-            gemini="gemini-test",
-            claude="claude-test",
-            grok="grok-test",
-        )
-        clients = make_panel_clients()
-        panel = ranker.Panel(models=models, clients=clients)
-        history = (("Earlier question", "Earlier answer"),)
-
-        with (
-            patch.object(
-                ranker,
-                "invoke_gpt",
-                new=AsyncMock(side_effect=["GPT panel answer", "Merged answer"]),
-            ) as invoke_gpt,
-            patch.object(
-                ranker,
-                "invoke_gemini",
-                new=AsyncMock(return_value="Gemini panel answer"),
-            ),
-            patch.object(
-                ranker,
-                "invoke_claude",
-                new=AsyncMock(return_value="Claude panel answer"),
-            ),
-            patch.object(
-                ranker,
-                "invoke_grok",
-                new=AsyncMock(return_value="Grok panel answer"),
-            ),
-        ):
-            result = await panel.deliberate("Question", history)
-
-        self.assertEqual(result, "Merged answer")
-        responses = ranker.PanelResponses(
-            gpt="GPT panel answer",
-            gemini="Gemini panel answer",
-            claude="Claude panel answer",
-            grok="Grok panel answer",
-        )
-        invoke_gpt.assert_has_awaits(
-            [
-                call(clients.gpt, "gpt-test", "Question", history),
-                call(
-                    clients.gpt,
-                    "gpt-test",
-                    "Merge the responses into a coherent one. List any major conflicts.",
-                    (*history, ("Question", ranker.format_panel_responses(responses))),
-                ),
-            ]
-        )
-
 
 class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
     async def test_rank_records_preserves_batch_order_and_merges_only_at_the_end(self):
@@ -1015,6 +935,35 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     ((ranking_question, ranker.format_panel_responses(rankings)),),
                 )
 
+    async def test_final_ranking_and_merge_failures_propagate(self):
+        for stage in ("ranking", "merge"):
+            with self.subTest(stage=stage):
+                failure = ranker.ModelInvocationError("Provider unavailable")
+                panel = MagicMock()
+                rankings = make_panel_responses("ranking")
+                panel.query = AsyncMock(
+                    side_effect=failure if stage == "ranking" else None,
+                    return_value=rankings,
+                )
+                with (
+                    patch.object(ranker, "progress"),
+                    patch.object(
+                        ranker,
+                        "process_batch",
+                        new=AsyncMock(return_value=make_panel_responses("batch")),
+                    ),
+                    patch.object(
+                        ranker, "invoke_gpt", new=AsyncMock(side_effect=failure)
+                    ) as merge,
+                    self.assertRaisesRegex(
+                        ranker.ModelInvocationError, "Provider unavailable"
+                    ),
+                ):
+                    await ranker.rank_records(
+                        ["AAA,Alpha"], panel, ranker.CRITERIA["power"]
+                    )
+                self.assertEqual(merge.await_count, int(stage == "merge"))
+
     async def test_batch_failures_prevent_ranking_and_merge(self):
         for failed_round in (1, 2):
             with self.subTest(failed_round=failed_round):
@@ -1026,16 +975,16 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 )
                 panel = MagicMock()
                 panel.query = AsyncMock(side_effect=results)
-                panel.deliberate = AsyncMock()
                 with (
                     patch.object(ranker, "progress"),
+                    patch.object(ranker, "invoke_gpt", new=AsyncMock()) as merge,
                     self.assertRaisesRegex(ranker.ModelInvocationError, "Panel failed"),
                 ):
                     await ranker.rank_records(
                         ["AAA,Alpha"], panel, ranker.CRITERIA["power"]
                     )
                 self.assertEqual(panel.query.await_count, failed_round)
-                panel.deliberate.assert_not_awaited()
+                merge.assert_not_awaited()
 
     async def test_process_batch_passes_all_first_responses_as_deeper_history(self):
         for criterion in ranker.CRITERIA.values():
@@ -1047,7 +996,6 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
         first = make_panel_responses("first")
         deeper = make_panel_responses("deeper")
         panel.query = AsyncMock(side_effect=[first, deeper])
-        panel.deliberate = AsyncMock()
         batch = ["NVDA,NVIDIA Corporation", "NFLX,Netflix Inc."]
         initial_question = ranker.build_analysis_question(batch, criterion)
 
@@ -1057,7 +1005,6 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             result = await ranker.process_batch(batch, 1, panel, criterion)
 
         self.assertEqual(result, deeper)
-        panel.deliberate.assert_not_awaited()
         progress.assert_any_call(f"Batch 1: first-pass {criterion.name} analysis")
         self.assertEqual(
             panel.query.await_args_list,
@@ -1079,19 +1026,16 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     await self.check_run_ranking(criterion_name, grok_priority)
 
     async def check_run_ranking(self, criterion_name, grok_priority):
-        args = argparse.Namespace(
-            criterion=criterion_name,
-            gpt_model="gpt-test",
-            gemini_model="gemini-test",
-            grok_model="grok-test",
-            claude_model="claude-test",
-            grok_priority=grok_priority,
-        )
+        flags = ["-m"] if criterion_name == "moat" else ["-p"]
+        if grok_priority:
+            flags.append("--grok-priority")
+        with patch.object(ranker.sys, "argv", ["ranker.py", *flags]):
+            args = ranker.parse_args()
         models = ranker.Models(
-            gpt="gpt-test",
-            gemini="gemini-test",
-            claude="claude-test",
-            grok="grok-test",
+            gpt=ranker.MODEL_GPT_BASE,
+            gemini=ranker.MODEL_GEMINI,
+            claude=ranker.MODEL_CLAUDE,
+            grok=ranker.MODEL_GROK_BASE,
         )
         api_keys = ranker.ApiKeys(
             gpt="openai-key",
@@ -1123,11 +1067,12 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             make_panel_responses("first batch"),
             make_panel_responses("second batch"),
         ]
-        deliberate_calls = []
+        query_calls = []
+        rankings = make_panel_responses("ranking")
 
-        async def deliberate(panel, question, history=()):
-            deliberate_calls.append((panel, question, history))
-            return "Final ranking"
+        async def query(panel, question, history=()):
+            query_calls.append((panel, question, history))
+            return rankings
 
         with (
             patch.object(ranker, "read_records", return_value=records) as read_records,
@@ -1153,7 +1098,10 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 ranker, "process_batch", new=AsyncMock(side_effect=batch_finals)
             ) as process_batch,
-            patch.object(ranker.Panel, "deliberate", new=deliberate),
+            patch.object(ranker.Panel, "query", new=query),
+            patch.object(
+                ranker, "invoke_gpt", new=AsyncMock(return_value="Final ranking")
+            ) as merge,
             patch.object(ranker, "progress"),
         ):
             result = await ranker.run(args)
@@ -1161,7 +1109,7 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "Final ranking")
         read_records.assert_called_once_with(ranker.sys.stdin)
         self.assertEqual(
-            [(question, history) for _, question, history in deliberate_calls],
+            [(question, history) for _, question, history in query_calls],
             [
                 (
                     ranker.build_ranking_question(
@@ -1170,6 +1118,12 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     (),
                 )
             ],
+        )
+        merge.assert_awaited_once_with(
+            gpt_client,
+            ranker.MODEL_GPT_BASE,
+            ranker.MERGE_INSTRUCTION,
+            ((query_calls[0][1], ranker.format_panel_responses(rankings)),),
         )
         self.assertEqual(process_batch.await_count, 2)
         self.assertCountEqual(
@@ -1189,7 +1143,7 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(panel.models == models for panel in panels))
         self.assertTrue(all(panel.clients == clients for panel in panels))
         self.assertTrue(all(panel.grok_priority == grok_priority for panel in panels))
-        self.assertTrue(all(panel is deliberate_calls[0][0] for panel in panels))
+        self.assertTrue(all(panel is query_calls[0][0] for panel in panels))
         openai_factory.assert_called_once_with(api_key="openai-key")
         gemini_factory.assert_called_once_with(api_key="gemini-key")
         claude_factory.assert_called_once_with(api_key="anthropic-key")

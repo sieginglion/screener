@@ -59,8 +59,10 @@ MODEL_CLAUDE = "claude-opus-5-5"
 BATCH_SIZE = 4
 MAX_CONCURRENT_BATCHES = 8
 MERGE_INSTRUCTION = "Merge the responses into a coherent one. List any major conflicts."
+PROVIDERS = ("gpt", "gemini", "claude", "grok")
 
 HistoryItem: TypeAlias = tuple[str, str]
+PanelResponses: TypeAlias = dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -113,23 +115,6 @@ class PanelClients:
 
 
 @dataclass(frozen=True)
-class PanelResponses:
-    gpt: str
-    gemini: str
-    claude: str
-    grok: str
-
-    def items(self) -> tuple[tuple[str, str], ...]:
-        """Return responses in the panel's canonical provider order."""
-        return (
-            ("gpt", self.gpt),
-            ("gemini", self.gemini),
-            ("claude", self.claude),
-            ("grok", self.grok),
-        )
-
-
-@dataclass(frozen=True)
 class Panel:
     """The models and clients that make up the deliberation panel."""
 
@@ -141,7 +126,7 @@ class Panel:
         self, question: str, history: Sequence[HistoryItem] = ()
     ) -> PanelResponses:
         """Ask the full model panel concurrently."""
-        gpt, gemini, claude, grok = await asyncio.gather(
+        responses = await asyncio.gather(
             invoke_gpt(self.clients.gpt, self.models.gpt, question, history),
             invoke_gemini(self.clients.gemini, self.models.gemini, question, history),
             invoke_claude(self.clients.claude, self.models.claude, question, history),
@@ -153,17 +138,7 @@ class Panel:
                 priority=self.grok_priority,
             ),
         )
-        return PanelResponses(gpt=gpt, gemini=gemini, claude=claude, grok=grok)
-
-    async def deliberate(
-        self, question: str, history: Sequence[HistoryItem] = ()
-    ) -> str:
-        """Ask the panel, then have GPT merge all answers as assistant history."""
-        responses = await self.query(question, history)
-        merge_history = (*history, (question, format_panel_responses(responses)))
-        return await invoke_gpt(
-            self.clients.gpt, self.models.gpt, MERGE_INSTRUCTION, merge_history
-        )
+        return dict(zip(PROVIDERS, responses, strict=True))
 
 
 def progress(message: str) -> None:
@@ -339,20 +314,17 @@ def build_analysis_question(batch: Sequence[str], criterion: Criterion) -> str:
 def format_panel_responses(responses: PanelResponses) -> str:
     """Wrap all four raw responses for a shared assistant history turn."""
     return "\n".join(
-        f'<response model="{model}">\n{text}\n</response>'
-        for model, text in responses.items()
+        f'<response model="{model}">\n{responses[model]}\n</response>'
+        for model in PROVIDERS
     )
 
 
 def build_ranking_question(
     batch_finals: Sequence[PanelResponses], criterion: Criterion
 ) -> str:
-    combined = PanelResponses(
-        gpt="\n".join(batch.gpt for batch in batch_finals),
-        gemini="\n".join(batch.gemini for batch in batch_finals),
-        claude="\n".join(batch.claude for batch in batch_finals),
-        grok="\n".join(batch.grok for batch in batch_finals),
-    )
+    combined = {
+        model: "\n".join(batch[model] for batch in batch_finals) for model in PROVIDERS
+    }
     return (
         "\n".join(
             f'<context model="{model}">\n{text}\n</context>'
@@ -401,7 +373,11 @@ async def rank_records(
 
     ranking_question = build_ranking_question(batch_finals, criterion)
     progress("Final ranking: sending all batch findings to the model panel")
-    return await panel.deliberate(ranking_question)
+    rankings = await panel.query(ranking_question)
+    merge_history = ((ranking_question, format_panel_responses(rankings)),)
+    return await invoke_gpt(
+        panel.clients.gpt, panel.models.gpt, MERGE_INSTRUCTION, merge_history
+    )
 
 
 def read_records(lines: Iterable[str]) -> list[str]:
@@ -427,16 +403,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Rank stocks by moat or pricing power from CSV records on stdin."
     )
-    parser.add_argument(
-        "--criterion",
-        choices=CRITERIA,
-        default="power",
-        help="Ranking criterion (default: power).",
+    criterion = parser.add_mutually_exclusive_group(required=True)
+    criterion.add_argument(
+        "-p",
+        dest="criterion",
+        action="store_const",
+        const="power",
+        help="Rank by pricing power.",
     )
-    parser.add_argument("--gpt-model", default=MODEL_GPT_BASE)
-    parser.add_argument("--gemini-model", default=MODEL_GEMINI)
-    parser.add_argument("--claude-model", default=MODEL_CLAUDE)
-    parser.add_argument("--grok-model", default=MODEL_GROK_BASE)
+    criterion.add_argument(
+        "-m",
+        dest="criterion",
+        action="store_const",
+        const="moat",
+        help="Rank by moat.",
+    )
     parser.add_argument(
         "--grok-priority",
         action="store_true",
@@ -477,10 +458,10 @@ async def run(args: argparse.Namespace) -> str:
         raise ValueError("No non-empty CSV records were supplied on standard input.")
 
     models = Models(
-        gpt=args.gpt_model,
-        gemini=args.gemini_model,
-        claude=args.claude_model,
-        grok=args.grok_model,
+        gpt=MODEL_GPT_BASE,
+        gemini=MODEL_GEMINI,
+        claude=MODEL_CLAUDE,
+        grok=MODEL_GROK_BASE,
     )
     api_keys = load_api_keys()
 
