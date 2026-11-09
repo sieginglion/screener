@@ -75,7 +75,7 @@ class Criterion:
 CRITERIA = {
     "moat": Criterion(
         name="moat",
-        analysis_question="What moats do they have?",
+        analysis_question="What moats (durability of pricing power) do they have?",
         ranking_instruction="Rank them into 4 tiers by moat",
     ),
     "power": Criterion(
