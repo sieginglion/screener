@@ -50,8 +50,9 @@ uv run python sp500_prices.py
 uv run python sp500_prices.py 16.csv
 ```
 
-Rank its moats or pricing power with OpenAI, Gemini, xAI, and Anthropic
-(choose `-p` for pricing power or `-m` for moat; one is required):
+Rank its moats or pricing power with OpenAI, Gemini, xAI, and Anthropic.
+Choose `-p` for pricing power (ability of raising prices) or `-m` for moat
+(durability of pricing power); one is required:
 
 ```sh
 ./ranker.py -m < 16.csv > 16-moats.md

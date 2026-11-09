@@ -76,12 +76,12 @@ CRITERIA = {
     "moat": Criterion(
         name="moat",
         analysis_question="What moats (durability of pricing power) do they have?",
-        ranking_instruction="Rank them into 4 tiers by moat",
+        ranking_instruction="Rank them into 4 tiers by moat (durability of pricing power)",
     ),
     "power": Criterion(
         name="pricing power",
-        analysis_question="What pricing powers do they have?",
-        ranking_instruction="Rank them into 4 tiers by pricing power",
+        analysis_question="What pricing powers (ability of raising prices) do they have?",
+        ranking_instruction="Rank them into 4 tiers by pricing power (ability of raising prices)",
     ),
 }
 
@@ -409,14 +409,14 @@ def parse_args() -> argparse.Namespace:
         dest="criterion",
         action="store_const",
         const="power",
-        help="Rank by pricing power.",
+        help="Rank by pricing power (ability of raising prices).",
     )
     criterion.add_argument(
         "-m",
         dest="criterion",
         action="store_const",
         const="moat",
-        help="Rank by moat.",
+        help="Rank by moat (durability of pricing power).",
     )
     parser.add_argument(
         "--grok-priority",
