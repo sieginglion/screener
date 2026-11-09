@@ -689,26 +689,57 @@ class RankingTests(unittest.TestCase):
             quadrant.Candidate(
                 "A", "Alpha", growth_rank=30, ps_score=0.3, pe_score=0.2
             ),
+            quadrant.Candidate("C", "C", growth_rank=2, ps_score=-1, pe_score=-1),
+            quadrant.Candidate("D", "D", growth_rank=3, ps_score=-2, pe_score=-2),
+            quadrant.Candidate("E", "E", growth_rank=4, ps_score=-3, pe_score=-3),
         ]
-        # Growth ranks 1,2,3 and valuation ranks 3,2,1 tie; symbols decide.
+        # Only A, B, Z survive valuation selection.
+        # Their growth ranks 1,2,3 and valuation ranks 3,2,1 tie; symbols decide.
         # Adding original growth values would incorrectly produce Z,B,A.
         self.assertEqual(
             [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
             ["A", "B", "Z"],
         )
 
-    def test_final_ranking_uses_either_score_and_excludes_only_missing_groups(self):
+    def test_final_ranking_uses_either_score_and_excludes_missing_groups_before_halving(
+        self,
+    ):
         candidates = [
             quadrant.Candidate("A", "Alpha", growth_rank=1, ps_score=0),
             quadrant.Candidate("B", "Beta", growth_rank=2, pe_score=0.2),
             quadrant.Candidate("C", "No valuation", growth_rank=3),
             quadrant.Candidate("D", "No growth", ps_score=0.9, pe_score=0.9),
+            quadrant.Candidate("E", "E", growth_rank=4, ps_score=-1),
+            quadrant.Candidate("F", "F", growth_rank=5, pe_score=-0.2),
         ]
         self.assertEqual(
             [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
             ["A", "B"],
         )
         self.assertEqual(quadrant.rank_candidates([]), [])
+
+    def test_valuation_cutoff_rounds_up_and_keeps_at_least_one(self):
+        for count in range(6):
+            candidates = [
+                quadrant.Candidate(str(i), str(i), growth_rank=1, ps_score=-i)
+                for i in reversed(range(count))
+            ]
+            candidates.append(quadrant.Candidate("missing", "Missing", growth_rank=1))
+            with self.subTest(count=count):
+                self.assertEqual(
+                    [item.symbol for item in quadrant.rank_candidates(candidates)],
+                    [str(i) for i in range((count + 1) // 2)],
+                )
+
+    def test_valuation_cutoff_breaks_ties_alphabetically(self):
+        candidates = [
+            quadrant.Candidate(symbol, symbol, growth_rank=1, ps_score=0, pe_score=0)
+            for symbol in "DCBA"
+        ]
+        self.assertEqual(
+            [item.symbol for item in quadrant.rank_candidates(candidates)],
+            ["A", "B"],
+        )
 
     def test_valuation_ranks_average_available_components(self):
         candidates = [
@@ -771,7 +802,10 @@ class MainTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     stdout.getvalue(),
-                    "".join(f"{symbol},{symbol}\n" for symbol in expected),
+                    "".join(
+                        f"{symbol},{symbol}\n"
+                        for symbol in expected[: (len(expected) + 1) // 2]
+                    ),
                 )
                 self.assertIn(
                     "Skipping F growth score: growth unavailable", stderr.getvalue()
@@ -799,7 +833,7 @@ class MainTests(unittest.TestCase):
 
         # Growth averages A=1.5, B=1.5, C=3.5, E=4 beat D=4.5.
         # Valuation averages A=2.5, B=1.5, C=2.5, E=3.5.
-        # Final reranked sums: B=2.5, A=4, C=5.5, E=8, with no ties.
+        # B and A survive valuation selection; B wins on valuation.
         # Averaging raw scores would incorrectly put A ahead of B.
         def fetch(path, params):
             return (growths if path == "growths" else scores)[params["symbol"]]
@@ -820,7 +854,7 @@ class MainTests(unittest.TestCase):
             ],
             ["A", "B", "C", "E"],
         )
-        self.assertEqual(stdout.getvalue(), "B,B\nA,A\nC,C\nE,E\n")
+        self.assertEqual(stdout.getvalue(), "B,B\nA,A\n")
         self.assertEqual(stderr.getvalue(), "")
 
     def test_main_scores_only_best_half_without_backfilling_and_writes_csv(self):
@@ -837,7 +871,7 @@ class MainTests(unittest.TestCase):
         ]
         growths = {symbol: [5.0 - i, None] for i, symbol in enumerate("ABCDE")}
         growths["N"] = [None, None]
-        scores = {"A": [None, None], "B": [0, 0.5], "C": [0.5, None]}
+        scores = {"A": [None, None], "B": [0, 0.5], "C": [0, None]}
 
         def fetch(path, params):
             return (growths if path == "growths" else scores)[params["symbol"]]
@@ -857,7 +891,49 @@ class MainTests(unittest.TestCase):
             ],
             ["A", "B", "C"],
         )
-        self.assertEqual(stdout.getvalue(), 'B,"Beta, Inc."\nC,Charlie\n')
+        self.assertEqual(stdout.getvalue(), 'B,"Beta, Inc."\n')
+
+    def test_valuation_failures_and_missing_scores_are_removed_before_halving(self):
+        candidates = [quadrant.Candidate(symbol, symbol) for symbol in "ABCDEFGHIJKL"]
+        for eligible_count in (4, 5):
+
+            def fetch(path, params):
+                symbol = params["symbol"]
+                if path == "growths":
+                    return [-ord(symbol), None]
+                if symbol == "F":
+                    return [None, None]
+                if symbol == "E" and eligible_count == 4:
+                    raise RuntimeError("valuation unavailable")
+                return [ord(symbol), None]
+
+            with (
+                self.subTest(eligible_count=eligible_count),
+                patch("quadrant.load_dotenv"),
+                patch("quadrant.load_candidates", return_value=candidates),
+                patch("quadrant.fetch_score", side_effect=fetch) as fetch_score,
+                patch("sys.stdout", new_callable=io.StringIO) as stdout,
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            ):
+                self.assertEqual(quadrant.main(), 0)
+                self.assertEqual(
+                    [
+                        request.args[1]["symbol"]
+                        for request in fetch_score.call_args_list
+                        if request.args[0] == "scores"
+                    ],
+                    list("ABCDEF"),
+                )
+                expected = "CD" if eligible_count == 4 else "CDE"
+                self.assertEqual(
+                    stdout.getvalue(),
+                    "".join(f"{symbol},{symbol}\n" for symbol in expected),
+                )
+                if eligible_count == 4:
+                    self.assertIn(
+                        "Skipping E valuation score: valuation unavailable",
+                        stderr.getvalue(),
+                    )
 
     def test_main_valuation_failure_does_not_backfill(self):
         candidates = [quadrant.Candidate(symbol, symbol) for symbol in "ABCD"]

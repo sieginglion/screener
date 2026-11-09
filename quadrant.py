@@ -644,6 +644,8 @@ def rank_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
         ("ps_score", "pe_score"),
         "valuation_rank",
     )
+    eligible.sort(key=lambda candidate: (candidate.valuation_rank, candidate.symbol))
+    eligible = eligible[: (len(eligible) + 1) // 2]
     growth_ranks = metric_ranks(eligible, "growth_rank", reverse=False)
     valuation_ranks = metric_ranks(eligible, "valuation_rank", reverse=False)
     return sorted(
