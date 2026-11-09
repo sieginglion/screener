@@ -78,6 +78,15 @@ Find 16 shared top-ranked tickers from two lists:
 uv run python top_k_intersection.py 16.csv 8.csv --target-count 16 -o moat.csv
 ```
 
+Average the original row ranks of two lists, keeping only tickers present in
+both. Output includes the ticker and name, sorted from lowest average rank
+to highest (ties use ticker order), without a header, on stdout. Save it with
+shell redirection:
+
+```sh
+uv run python average_rankings.py ./t.08.csv ./t.16.csv > averaged.csv
+```
+
 Combine ranked CSV files with raw linear reverse-rank scores. Every row is
 used; in a list of length ``n``, scores decline from ``n`` for the first row to
 ``1`` for the last:
