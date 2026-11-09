@@ -39,6 +39,15 @@ def make_panel_clients():
     )
 
 
+def make_panel_responses(label):
+    return ranker.PanelResponses(
+        gpt=f"GPT {label}",
+        gemini=f"Gemini {label}",
+        claude=f"Claude {label}",
+        grok=f"Grok {label}",
+    )
+
+
 class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
     async def test_gpt_returns_response_text(self):
         response = types.SimpleNamespace(
@@ -652,11 +661,10 @@ class PromptBuilderTests(unittest.TestCase):
                     'NVDA,NVIDIA Corporation\nNFLX,"Netflix, Inc."\n' + expected,
                 )
 
-    def test_build_synthesis_prompt(self):
-        prompt = ranker.build_synthesis_prompt(
-            "Question",
+    def test_format_panel_responses_preserves_raw_text(self):
+        prompt = ranker.format_panel_responses(
             ranker.PanelResponses(
-                gpt="GPT answer",
+                gpt=" GPT answer\nSecond line",
                 gemini="Gemini answer",
                 claude="Claude answer",
                 grok="Grok answer",
@@ -665,11 +673,9 @@ class PromptBuilderTests(unittest.TestCase):
 
         self.assertEqual(
             prompt,
-            """<prompt>
-Question
-</prompt>
-<response model="gpt">
-GPT answer
+            """<response model="gpt">
+ GPT answer
+Second line
 </response>
 <response model="gemini">
 Gemini answer
@@ -679,9 +685,7 @@ Claude answer
 </response>
 <response model="grok">
 Grok answer
-</response>
-Merge the responses into a coherent one. List any major conflicts.
-""",
+</response>""",
         )
 
     def test_build_ranking_question(self):
@@ -690,15 +694,32 @@ Merge the responses into a coherent one. List any major conflicts.
             ("power", "Rank them into 4 tiers by pricing power"),
         ):
             with self.subTest(criterion=name):
-                question = ranker.build_ranking_question(
-                    ["First batch analysis", "Second batch analysis"],
-                    ranker.CRITERIA[name],
-                )
-                self.assertEqual(
-                    question,
-                    "<context>\nFirst batch analysis\nSecond batch analysis\n</context>\n"
-                    + expected,
-                )
+                for batch_count in (1, 2):
+                    with self.subTest(batch_count=batch_count):
+                        question = ranker.build_ranking_question(
+                            [
+                                make_panel_responses(f"batch {i}")
+                                for i in range(1, batch_count + 1)
+                            ],
+                            ranker.CRITERIA[name],
+                        )
+                        expected_contexts = []
+                        for model, provider in (
+                            ("gpt", "GPT"),
+                            ("gemini", "Gemini"),
+                            ("claude", "Claude"),
+                            ("grok", "Grok"),
+                        ):
+                            answers = "\n".join(
+                                f"{provider} batch {i}"
+                                for i in range(1, batch_count + 1)
+                            )
+                            expected_contexts.append(
+                                f'<context model="{model}">\n{answers}\n</context>'
+                            )
+                        self.assertEqual(
+                            question, "\n".join(expected_contexts) + "\n" + expected
+                        )
 
 
 class ArgumentParsingTests(unittest.TestCase):
@@ -913,33 +934,120 @@ class PanelSynthesisTests(unittest.IsolatedAsyncioTestCase):
             result = await panel.deliberate("Question", history)
 
         self.assertEqual(result, "Merged answer")
-        synthesis_prompt = invoke_gpt.await_args_list[1].args[2]
-        self.assertEqual(
-            synthesis_prompt,
-            ranker.build_synthesis_prompt(
-                "Question",
-                ranker.PanelResponses(
-                    gpt="GPT panel answer",
-                    gemini="Gemini panel answer",
-                    claude="Claude panel answer",
-                    grok="Grok panel answer",
-                ),
-            ),
+        responses = ranker.PanelResponses(
+            gpt="GPT panel answer",
+            gemini="Gemini panel answer",
+            claude="Claude panel answer",
+            grok="Grok panel answer",
         )
-        self.assertEqual(invoke_gpt.await_args_list[1].args[3], history)
+        invoke_gpt.assert_has_awaits(
+            [
+                call(clients.gpt, "gpt-test", "Question", history),
+                call(
+                    clients.gpt,
+                    "gpt-test",
+                    "Merge the responses into a coherent one. List any major conflicts.",
+                    (*history, ("Question", ranker.format_panel_responses(responses))),
+                ),
+            ]
+        )
 
 
 class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_process_batch_passes_first_synthesis_as_deeper_history(self):
+    async def test_rank_records_preserves_batch_order_and_merges_only_at_the_end(self):
+        records = ["AAA,Alpha", "BBB,Beta", "CCC,Gamma", "DDD,Delta", "EEE,Echo"]
+        for criterion in ranker.CRITERIA.values():
+            with self.subTest(criterion=criterion.name):
+                panel = ranker.Panel(
+                    models=ranker.Models("gpt", "gemini", "claude", "grok"),
+                    clients=make_panel_clients(),
+                )
+                first_question = ranker.build_analysis_question(records[:4], criterion)
+                second_question = ranker.build_analysis_question(records[4:], criterion)
+                second_batch_done = asyncio.Event()
+                completed_batches = []
+                revised = [
+                    make_panel_responses("batch 1"),
+                    make_panel_responses("batch 2"),
+                ]
+                rankings = make_panel_responses("ranking")
+                ranking_question = ranker.build_ranking_question(revised, criterion)
+
+                async def query(question, history: tuple[ranker.HistoryItem, ...] = ()):
+                    if question == first_question:
+                        await second_batch_done.wait()
+                        return make_panel_responses("first pass 1")
+                    if question == second_question:
+                        return make_panel_responses("first pass 2")
+                    if question == "think again":
+                        if history[0][0] == second_question:
+                            completed_batches.append(2)
+                            second_batch_done.set()
+                            return revised[1]
+                        completed_batches.append(1)
+                        return revised[0]
+                    self.assertEqual(question, ranking_question)
+                    self.assertEqual(history, ())
+                    return rankings
+
+                with (
+                    patch.object(
+                        ranker.Panel, "query", side_effect=query
+                    ) as panel_query,
+                    patch.object(
+                        ranker,
+                        "invoke_gpt",
+                        new=AsyncMock(return_value="Final ranking"),
+                    ) as merge,
+                    patch.object(ranker, "progress"),
+                ):
+                    result = await asyncio.wait_for(
+                        ranker.rank_records(records, panel, criterion), timeout=5
+                    )
+
+                self.assertEqual(result, "Final ranking")
+                self.assertEqual(completed_batches, [2, 1])
+                self.assertEqual(panel_query.await_count, 5)
+                merge.assert_awaited_once_with(
+                    panel.clients.gpt,
+                    panel.models.gpt,
+                    "Merge the responses into a coherent one. List any major conflicts.",
+                    ((ranking_question, ranker.format_panel_responses(rankings)),),
+                )
+
+    async def test_batch_failures_prevent_ranking_and_merge(self):
+        for failed_round in (1, 2):
+            with self.subTest(failed_round=failed_round):
+                failure = ranker.ModelInvocationError("Panel failed")
+                results = (
+                    [failure]
+                    if failed_round == 1
+                    else [make_panel_responses("first"), failure]
+                )
+                panel = MagicMock()
+                panel.query = AsyncMock(side_effect=results)
+                panel.deliberate = AsyncMock()
+                with (
+                    patch.object(ranker, "progress"),
+                    self.assertRaisesRegex(ranker.ModelInvocationError, "Panel failed"),
+                ):
+                    await ranker.rank_records(
+                        ["AAA,Alpha"], panel, ranker.CRITERIA["power"]
+                    )
+                self.assertEqual(panel.query.await_count, failed_round)
+                panel.deliberate.assert_not_awaited()
+
+    async def test_process_batch_passes_all_first_responses_as_deeper_history(self):
         for criterion in ranker.CRITERIA.values():
             with self.subTest(criterion=criterion.name):
                 await self.check_process_batch_history(criterion)
 
     async def check_process_batch_history(self, criterion):
         panel = MagicMock()
-        panel.deliberate = AsyncMock(
-            side_effect=["First synthesis", "Deeper synthesis"]
-        )
+        first = make_panel_responses("first")
+        deeper = make_panel_responses("deeper")
+        panel.query = AsyncMock(side_effect=[first, deeper])
+        panel.deliberate = AsyncMock()
         batch = ["NVDA,NVIDIA Corporation", "NFLX,Netflix Inc."]
         initial_question = ranker.build_analysis_question(batch, criterion)
 
@@ -948,15 +1056,16 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await ranker.process_batch(batch, 1, panel, criterion)
 
-        self.assertEqual(result, "Deeper synthesis")
+        self.assertEqual(result, deeper)
+        panel.deliberate.assert_not_awaited()
         progress.assert_any_call(f"Batch 1: first-pass {criterion.name} analysis")
         self.assertEqual(
-            panel.deliberate.await_args_list,
+            panel.query.await_args_list,
             [
                 call(initial_question),
                 call(
                     "think again",
-                    ((initial_question, "First synthesis"),),
+                    ((initial_question, ranker.format_panel_responses(first)),),
                 ),
             ],
         )
@@ -1010,7 +1119,10 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "DDD,Delta",
             "EEE,Echo",
         ]
-        batch_finals = ["First batch analysis", "Second batch analysis"]
+        batch_finals = [
+            make_panel_responses("first batch"),
+            make_panel_responses("second batch"),
+        ]
         deliberate_calls = []
 
         async def deliberate(panel, question, history=()):

@@ -58,6 +58,13 @@ Rank its moats or pricing power with OpenAI, Gemini, xAI, and Anthropic
 ./ranker.py --criterion power < 16.csv > 16-pricing.md
 ```
 
+Each batch of up to four stocks receives two panel rounds. The second asks
+`think again`, with all four first-round answers tagged by model in shared
+assistant history. Revised answers are concatenated by model with newline
+separators into four `<context model="…">` blocks for the final ranking panel.
+GPT performs the only merge, with all four tagged rankings as assistant history
+and the merge instruction as the next user message.
+
 Add `--grok-priority` to request priority processing for Grok at xAI's premium
 token pricing. Standard processing is the default:
 

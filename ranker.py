@@ -7,11 +7,12 @@ Read one security per line from standard input, for example:
     PLTR,Palantir Technologies Inc.
     NFLX,"Netflix, Inc."
 
-The script processes four securities at a time.  For each batch it asks the
-four Pareja models about the selected criterion, has GPT synthesize their answers, asks
-each model to "think again" with that synthesis as shared history, and
-synthesizes again.  It then asks all four models to rank the combined batch
-findings into four tiers by that criterion and performs one final GPT synthesis.
+The script processes four securities at a time. For each batch it asks the
+four Pareja models about the selected criterion, then asks each model to
+"think again" with all four tagged answers as shared assistant history.
+It groups the revised batch findings by model and asks all four models to rank
+them into four tiers. GPT then merges the rankings, with all four tagged
+rankings as assistant history. This is the only synthesis in the workflow.
 
 Failure behavior: fail as soon as a provider error is propagated. Do not
 synthesize a partial panel or emit a final ranking after a failed deliberation.
@@ -57,6 +58,7 @@ MODEL_CLAUDE = "claude-opus-5-5"
 # https://platform.claude.com/settings/billing
 BATCH_SIZE = 4
 MAX_CONCURRENT_BATCHES = 8
+MERGE_INSTRUCTION = "Merge the responses into a coherent one. List any major conflicts."
 
 HistoryItem: TypeAlias = tuple[str, str]
 
@@ -156,10 +158,12 @@ class Panel:
     async def deliberate(
         self, question: str, history: Sequence[HistoryItem] = ()
     ) -> str:
-        """Ask the panel, then have GPT merge its responses."""
+        """Ask the panel, then have GPT merge all answers as assistant history."""
         responses = await self.query(question, history)
-        prompt = build_synthesis_prompt(question, responses)
-        return await invoke_gpt(self.clients.gpt, self.models.gpt, prompt, history)
+        merge_history = (*history, (question, format_panel_responses(responses)))
+        return await invoke_gpt(
+            self.clients.gpt, self.models.gpt, MERGE_INSTRUCTION, merge_history
+        )
 
 
 def progress(message: str) -> None:
@@ -332,41 +336,44 @@ def build_analysis_question(batch: Sequence[str], criterion: Criterion) -> str:
     return "\n".join(batch) + "\n" + criterion.analysis_question
 
 
-def build_synthesis_prompt(question: str, responses: PanelResponses) -> str:
-    responses_text = "\n".join(
+def format_panel_responses(responses: PanelResponses) -> str:
+    """Wrap all four raw responses for a shared assistant history turn."""
+    return "\n".join(
         f'<response model="{model}">\n{text}\n</response>'
         for model, text in responses.items()
     )
-    return f"""<prompt>
-{question}
-</prompt>
-{responses_text}
-Merge the responses into a coherent one. List any major conflicts.
-"""
 
 
-def build_ranking_question(batch_finals: Sequence[str], criterion: Criterion) -> str:
+def build_ranking_question(
+    batch_finals: Sequence[PanelResponses], criterion: Criterion
+) -> str:
+    combined = PanelResponses(
+        gpt="\n".join(batch.gpt for batch in batch_finals),
+        gemini="\n".join(batch.gemini for batch in batch_finals),
+        claude="\n".join(batch.claude for batch in batch_finals),
+        grok="\n".join(batch.grok for batch in batch_finals),
+    )
     return (
-        "<context>\n"
-        + "\n".join(batch_finals)
-        + "\n</context>\n"
+        "\n".join(
+            f'<context model="{model}">\n{text}\n</context>'
+            for model, text in combined.items()
+        )
+        + "\n"
         + criterion.ranking_instruction
     )
 
 
 async def process_batch(
     batch: Sequence[str], batch_number: int, panel: Panel, criterion: Criterion
-) -> str:
+) -> PanelResponses:
     initial_question = build_analysis_question(batch, criterion)
     progress(f"Batch {batch_number}: first-pass {criterion.name} analysis")
-    first_synthesis = await panel.deliberate(initial_question)
+    first_responses = await panel.query(initial_question)
 
-    # In pareja.py, the next turn's history contains the prior user question and
-    # GPT's displayed synthesis. Give every model that same shared history.
-    # The requested next user turn is deliberately just these two words.
-    deeper_history = ((initial_question, first_synthesis),)
+    # Every model sees the same four raw answers in the assistant history turn.
+    deeper_history = ((initial_question, format_panel_responses(first_responses)),)
     progress(f"Batch {batch_number}: deeper analysis")
-    return await panel.deliberate("think again", deeper_history)
+    return await panel.query("think again", deeper_history)
 
 
 async def rank_records(
@@ -379,7 +386,9 @@ async def rank_records(
     ]
     batch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_BATCHES)
 
-    async def process_batch_with_limit(batch_number: int, batch: Sequence[str]) -> str:
+    async def process_batch_with_limit(
+        batch_number: int, batch: Sequence[str]
+    ) -> PanelResponses:
         async with batch_semaphore:
             return await process_batch(batch, batch_number, panel, criterion)
 
