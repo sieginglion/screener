@@ -647,7 +647,7 @@ class InputParsingTests(unittest.TestCase):
 class PromptBuilderTests(unittest.TestCase):
     def test_build_analysis_question_for_each_criterion(self):
         for name, expected in (
-            ("moat", "What moats (durability of pricing power) do they have?"),
+            ("moat", "What moats (durability of profitability) do they have?"),
             ("power", "What pricing powers (ability of raising prices) do they have?"),
         ):
             with self.subTest(criterion=name):
@@ -689,7 +689,7 @@ Grok answer
 
     def test_build_ranking_question(self):
         for name, expected in (
-            ("moat", "Rank them into 4 tiers by moat (durability of pricing power)"),
+            ("moat", "Rank them into 4 tiers by moat (durability of profitability)"),
             (
                 "power",
                 "Rank them into 4 tiers by pricing power (ability of raising prices)",

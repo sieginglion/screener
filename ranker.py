@@ -75,8 +75,8 @@ class Criterion:
 CRITERIA = {
     "moat": Criterion(
         name="moat",
-        analysis_question="What moats (durability of pricing power) do they have?",
-        ranking_instruction="Rank them into 4 tiers by moat (durability of pricing power)",
+        analysis_question="What moats (durability of profitability) do they have?",
+        ranking_instruction="Rank them into 4 tiers by moat (durability of profitability)",
     ),
     "power": Criterion(
         name="pricing power",
@@ -416,7 +416,7 @@ def parse_args() -> argparse.Namespace:
         dest="criterion",
         action="store_const",
         const="moat",
-        help="Rank by moat (durability of pricing power).",
+        help="Rank by moat (durability of profitability).",
     )
     parser.add_argument(
         "--grok-priority",
