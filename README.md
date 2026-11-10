@@ -39,10 +39,10 @@ growth and valuation among the survivors and adds those ranks with equal weight.
 Higher growth and higher valuation scores receive lower numeric ranks (1 is
 best); lower valuation means a higher score. Score values from the service are
 used without validation. The
-`/scores` request passes `market`, `symbol`, and `q`. A missing metric uses the
-other metric's rank, and candidates missing both metrics in either group are
-omitted before each cutoff. Failed scoring requests are also omitted, without
-backfilling.
+`/scores` request passes `market`, `symbol`, and `q`. Candidates missing revenue
+growth or the PS score are omitted before ranking the corresponding group and
+applying its cutoff. If EPS growth or the PE score is missing, the first metric's
+rank is used alone. Failed scoring requests are also omitted, without backfilling.
 
 Create an S&P 500 correlation-map video using BlackRock's latest S&P 500
 holdings export, or for tickers in the first column of a headerless CSV (bubble

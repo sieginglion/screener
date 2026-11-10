@@ -307,7 +307,10 @@ def score_candidate(
 ) -> Candidate | None:
     try:
         scores = get_score()
-        return replace(candidate, **dict(zip(score_fields, scores, strict=True)))
+        values = dict(zip(score_fields, scores, strict=True))
+        if values[score_fields[0]] is None:
+            return None
+        return replace(candidate, **values)
     except Exception as exc:
         report_scoring_failure(candidate, score_name, exc)
         return None
@@ -618,7 +621,9 @@ def metric_ranks(
 def combine_metric_ranks(
     candidates: Iterable[Candidate], fields: tuple[str, str], rank_field: str
 ) -> list[Candidate]:
-    candidates = list(candidates)
+    candidates = [
+        candidate for candidate in candidates if getattr(candidate, fields[0]) is not None
+    ]
     ranks = [metric_ranks(candidates, field) for field in fields]
     combined = []
     for candidate in candidates:

@@ -468,7 +468,7 @@ class CandidateLoadingTests(unittest.TestCase):
 
 
 class GrowthScoringTests(unittest.TestCase):
-    def test_nullable_growth_and_valuation_pairs_are_accepted_and_ranked(self):
+    def test_first_metric_is_required_and_second_metric_is_optional(self):
         cases = (
             (
                 quadrant.score_growth,
@@ -499,6 +499,9 @@ class GrowthScoringTests(unittest.TestCase):
                         patch("quadrant.fetch_score", return_value=[first, second]),
                     ):
                         scored = scorer(quadrant.Candidate("target", "Target"))
+                        if first is None:
+                            self.assertIsNone(scored)
+                            continue
                         self.assertEqual(
                             scored,
                             replace(
@@ -511,18 +514,15 @@ class GrowthScoringTests(unittest.TestCase):
                             [*references, scored], fields, rank_field
                         )
                         target = [item for item in ranked if item.symbol == "target"]
-                        if first is None and second is None:
-                            self.assertEqual(target, [])
-                        else:
-                            ranks = [
-                                expected_ranks[value]
-                                for value in (first, second)
-                                if value is not None
-                            ]
-                            self.assertEqual(len(target), 1)
-                            self.assertEqual(
-                                getattr(target[0], rank_field), sum(ranks) / len(ranks)
-                            )
+                        ranks = [
+                            expected_ranks[value]
+                            for value in (first, second)
+                            if value is not None
+                        ]
+                        self.assertEqual(len(target), 1)
+                        self.assertEqual(
+                            getattr(target[0], rank_field), sum(ranks) / len(ranks)
+                        )
 
     def test_scores_are_kept_on_the_same_candidate(self):
         candidate = quadrant.Candidate("A", "Alpha", trading_dollars=123)
@@ -545,7 +545,7 @@ class GrowthScoringTests(unittest.TestCase):
     def test_scoring_uses_the_expected_endpoints_and_parameters(self):
         candidate = quadrant.Candidate("A", "Alpha")
         with patch(
-            "quadrant.fetch_score", side_effect=[[None, -2], [None, 0.75]]
+            "quadrant.fetch_score", side_effect=[[0, -2], [0, 0.75]]
         ) as fetch:
             grown = quadrant.score_growth(candidate)
             scored = quadrant.score_valuation(candidate)
@@ -564,9 +564,9 @@ class GrowthScoringTests(unittest.TestCase):
             ],
         )
         assert grown is not None and scored is not None
-        self.assertIsNone(grown.revenue_growth)
+        self.assertEqual(grown.revenue_growth, 0)
         self.assertEqual(grown.eps_growth, -2.0)
-        self.assertIsNone(scored.ps_score)
+        self.assertEqual(scored.ps_score, 0)
         self.assertEqual(scored.pe_score, 0.75)
 
     def test_scoring_failure_skips_the_candidate_with_a_message(self):
@@ -632,7 +632,7 @@ class RankingTests(unittest.TestCase):
             quadrant.Candidate("A", "Alpha", revenue_growth=100, eps_growth=-2),
             quadrant.Candidate("B", "Beta", revenue_growth=2, eps_growth=0),
             quadrant.Candidate("C", "Charlie", revenue_growth=-1),
-            quadrant.Candidate("D", "Delta", eps_growth=-3),
+            quadrant.Candidate("D", "Delta", eps_growth=1000),
             quadrant.Candidate("E", "Empty"),
         ]
         result = quadrant.combine_metric_ranks(
@@ -640,7 +640,7 @@ class RankingTests(unittest.TestCase):
         )
         self.assertEqual(
             {candidate.symbol: candidate.growth_rank for candidate in result},
-            {"A": 1.5, "B": 1.5, "C": 3, "D": 3},
+            {"A": 1.5, "B": 1.5, "C": 3},
         )
 
     def test_metric_ranks_average_ties_and_ignore_null(self):
@@ -671,7 +671,7 @@ class RankingTests(unittest.TestCase):
 
     def test_growth_selection_breaks_cutoff_ties_alphabetically(self):
         candidates = [
-            quadrant.Candidate(symbol, symbol, eps_growth=0)
+            quadrant.Candidate(symbol, symbol, revenue_growth=0)
             for symbol in ("D", "C", "B", "A")
         ]
         self.assertEqual(
@@ -701,7 +701,7 @@ class RankingTests(unittest.TestCase):
             ["A", "B", "Z"],
         )
 
-    def test_final_ranking_uses_either_score_and_excludes_missing_groups_before_halving(
+    def test_final_ranking_requires_first_score_before_halving(
         self,
     ):
         candidates = [
@@ -714,7 +714,7 @@ class RankingTests(unittest.TestCase):
         ]
         self.assertEqual(
             [candidate.symbol for candidate in quadrant.rank_candidates(candidates)],
-            ["A", "B"],
+            ["A"],
         )
         self.assertEqual(quadrant.rank_candidates([]), [])
 
@@ -746,14 +746,14 @@ class RankingTests(unittest.TestCase):
             quadrant.Candidate("A", "Alpha", ps_score=0.5, pe_score=0.9),
             quadrant.Candidate("B", "Beta", ps_score=0.9, pe_score=0.5),
             quadrant.Candidate("C", "Charlie", ps_score=0),
-            quadrant.Candidate("D", "Delta", pe_score=0),
+            quadrant.Candidate("D", "Delta", pe_score=1000),
         ]
         result = quadrant.combine_metric_ranks(
             candidates, ("ps_score", "pe_score"), "valuation_rank"
         )
         self.assertEqual(
             {candidate.symbol: candidate.valuation_rank for candidate in result},
-            {"A": 1.5, "B": 1.5, "C": 3, "D": 3},
+            {"A": 1.5, "B": 1.5, "C": 3},
         )
 
 
@@ -765,7 +765,7 @@ class MainTests(unittest.TestCase):
                 quadrant.Candidate(symbol, symbol) for symbol in symbols + "FMN"
             ]
             growths = {symbol: [-i - 1.0, None] for i, symbol in enumerate(symbols)}
-            growths.update({"M": [1], "N": [None, None]})
+            growths.update({"M": [1], "N": [None, 1000]})
 
             def fetch(path, params):
                 if path == "growths":
@@ -902,7 +902,7 @@ class MainTests(unittest.TestCase):
                 if path == "growths":
                     return [-ord(symbol), None]
                 if symbol == "F":
-                    return [None, None]
+                    return [None, 1000]
                 if symbol == "E" and eligible_count == 4:
                     raise RuntimeError("valuation unavailable")
                 return [ord(symbol), None]
