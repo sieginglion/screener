@@ -43,7 +43,7 @@ TradingView's `1W` starts Monday at local midnight; `1M` starts on the first.
 Only windows starting at or after the lookback boundary are eligible, even at
 month-end with `LAST_N = 28`. The window covering the most completed reference
 trading days wins; ties prefer `1W`. The candidate-pool multiplier is
-`trading_days_withing_last_n / trading_days_withing_tv_sort_window * 1.1`, and
+`lookback_sessions / window_sessions * 1.1`, and
 the pool size is `ceil(RESULT_LIMIT * multiplier)`.
 
 US FMP and Taiwan FinMind liquidity use the same inclusive close-time

@@ -64,15 +64,15 @@ def cached(ttl):
     return decorator
 
 
-def get_json(url: str, params: list[tuple[str, str | int | None]]) -> Any:
-    response = httpx.get(url, params=dict(params), timeout=None)
+def get_json(url: str, params: Mapping[str, str | int | None]) -> Any:
+    response = httpx.get(url, params=params, timeout=None)
     response.raise_for_status()
     return response.json()
 
 
 @cached(43200)
 def cached_get_json(url: str, params: list[tuple[str, str | int | None]]) -> Any:
-    return get_json(url, params)
+    return get_json(url, dict(params))
 
 
 TV_COMMON_HEADERS = {
@@ -180,11 +180,17 @@ class ScreeningWindow:
     lookback_start: dt.datetime
     tv_sort_window: str
     tv_sort_start: dt.datetime
-    trading_days_withing_last_n: int
-    trading_days_withing_tv_sort_window: int
-    candidate_pool_multiplier: float
-    request_start: str
+    lookback_sessions: int
+    window_sessions: int
     request_end: str
+
+    @property
+    def candidate_pool_multiplier(self) -> float:
+        return self.lookback_sessions / self.window_sessions * 1.1
+
+    @property
+    def request_start(self) -> str:
+        return self.lookback_start.date().isoformat()
 
 
 def validate_last_n(last_n: object) -> None:
@@ -205,50 +211,33 @@ def select_screening_window(
 ) -> ScreeningWindow:
     closes = [trading_close_time(market, date) for date in set(trading_dates)]
     closes = [close for close in closes if lookback_start <= close <= now]
-    trading_days_withing_last_n = len(closes)
-    if not trading_days_withing_last_n:
+    if not closes:
         raise ScreeningWindowError("No completed trading days within LAST_N.")
 
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # LAST_N is at least 7, so the current week always fits. Keep it on ties.
-    tv_sort_window = "1W"
-    tv_sort_start = midnight - dt.timedelta(days=now.weekday())
-    trading_days_withing_tv_sort_window = sum(
-        close >= tv_sort_start for close in closes
-    )
-    month_start = midnight.replace(day=1)
-    reason = "1M starts before the lookback boundary"
-    if month_start >= lookback_start:
-        month_days = sum(close >= month_start for close in closes)
-        reason = (
-            f"completed trading days: 1W={trading_days_withing_tv_sort_window}, "
-            f"1M={month_days}; ties prefer 1W"
-        )
-        if month_days > trading_days_withing_tv_sort_window:
-            tv_sort_window, tv_sort_start = "1M", month_start
-            trading_days_withing_tv_sort_window = month_days
-    if not trading_days_withing_tv_sort_window:
+    starts = {
+        "1W": midnight - dt.timedelta(days=now.weekday()),
+        "1M": midnight.replace(day=1),
+    }
+    counts = {
+        name: sum(close >= start for close in closes)
+        for name, start in starts.items()
+        if start >= lookback_start
+    }
+    # LAST_N >= 7 guarantees 1W is eligible; insertion order makes it win ties.
+    tv_sort_window = max(counts, key=counts.__getitem__)
+    window_sessions = counts[tv_sort_window]
+    if not window_sessions:
         raise ScreeningWindowError(
             "No completed trading days within the eligible TradingView windows."
         )
-    multiplier = trading_days_withing_last_n / trading_days_withing_tv_sort_window * 1.1
-    sys.stderr.write(
-        f"Selected TV_SORT_WINDOW={tv_sort_window}: {reason}.\n"
-        f"  {market.timezone}: lookback {lookback_start.isoformat()} to {now.isoformat()}; "
-        f"selected window starts {tv_sort_start.isoformat()}.\n"
-        f"  Completed trading days: lookback={trading_days_withing_last_n}, "
-        f"selected window={trading_days_withing_tv_sort_window}; "
-        f"candidate pool multiplier={multiplier:.6g}.\n"
-    )
     return ScreeningWindow(
         now=now,
         lookback_start=lookback_start,
         tv_sort_window=tv_sort_window,
-        tv_sort_start=tv_sort_start,
-        trading_days_withing_last_n=trading_days_withing_last_n,
-        trading_days_withing_tv_sort_window=trading_days_withing_tv_sort_window,
-        candidate_pool_multiplier=multiplier,
-        request_start=lookback_start.date().isoformat(),
+        tv_sort_start=starts[tv_sort_window],
+        lookback_sessions=len(closes),
+        window_sessions=window_sessions,
         request_end=max(closes).date().isoformat(),
     )
 
@@ -266,12 +255,13 @@ def load_screening_window(
     lookback_start = now - dt.timedelta(days=last_n)
     symbol = "NVDA" if market.code == "u" else "2330.TW"
     url = FMP_STABLE_URL if market.code == "u" else f"{FMP_LEGACY_URL}/{symbol}"
-    params = [
-        ("apikey", api_key),
-        ("from", lookback_start.date().isoformat()),
-        ("to", now.date().isoformat()),
-        *([("symbol", symbol)] if market.code == "u" else []),
-    ]
+    params = {
+        "apikey": api_key,
+        "from": lookback_start.date().isoformat(),
+        "to": now.date().isoformat(),
+    }
+    if market.code == "u":
+        params["symbol"] = symbol
     try:
         # Reference dates must be fresh, even when candidate history is cached.
         data = get_json(url, params)
@@ -281,7 +271,16 @@ def load_screening_window(
         raise ScreeningWindowError(
             f"Could not load FMP reference history for {symbol}."
         ) from exc
-    return select_screening_window(market, now, lookback_start, dates)
+    window = select_screening_window(market, now, lookback_start, dates)
+    sys.stderr.write(
+        f"Selected TV_SORT_WINDOW={window.tv_sort_window}.\n"
+        f"  {market.timezone}: lookback {lookback_start.isoformat()} to {now.isoformat()}; "
+        f"selected window starts {window.tv_sort_start.isoformat()}.\n"
+        f"  Completed trading days: lookback={window.lookback_sessions}, "
+        f"selected window={window.window_sessions}; "
+        f"candidate pool multiplier={window.candidate_pool_multiplier:.6g}.\n"
+    )
+    return window
 
 
 def type_filter(stock_type: str, *typespecs: str) -> dict:

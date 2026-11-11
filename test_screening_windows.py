@@ -55,8 +55,8 @@ class WindowSelectionTests(unittest.TestCase):
             with self.subTest(code=code):
                 window = self.select("2026-07-10T17:00", code=code)
                 self.assertEqual(window.tv_sort_window, "1M")
-                self.assertEqual(window.trading_days_withing_last_n, 10)
-                self.assertEqual(window.trading_days_withing_tv_sort_window, 8)
+                self.assertEqual(window.lookback_sessions, 10)
+                self.assertEqual(window.window_sessions, 8)
                 self.assertEqual(window.candidate_pool_multiplier, 10 / 8 * 1.1)
                 self.assertEqual(
                     quadrant.candidate_pool_size(101, window.candidate_pool_multiplier),
@@ -66,8 +66,8 @@ class WindowSelectionTests(unittest.TestCase):
     def test_month_ineligible_and_shorter_week_expands_pool(self):
         window = self.select("2026-07-17T17:00")
         self.assertEqual(window.tv_sort_window, "1W")
-        self.assertEqual(window.trading_days_withing_last_n, 10)
-        self.assertEqual(window.trading_days_withing_tv_sort_window, 5)
+        self.assertEqual(window.lookback_sessions, 10)
+        self.assertEqual(window.window_sessions, 5)
         self.assertEqual(window.candidate_pool_multiplier, 2.2)
 
     def test_ties_prefer_week_even_with_different_start_dates(self):
@@ -78,7 +78,7 @@ class WindowSelectionTests(unittest.TestCase):
                 self.assertEqual(
                     window.tv_sort_start, local_now(code, "2026-08-03T00:00")
                 )
-                self.assertEqual(window.trading_days_withing_tv_sort_window, 2)
+                self.assertEqual(window.window_sessions, 2)
 
     def test_week_and_month_reset_at_local_midnight(self):
         sunday = self.select("2026-07-19T23:59:59", 7)
@@ -112,8 +112,8 @@ class WindowSelectionTests(unittest.TestCase):
     def test_duplicate_future_and_missing_dates(self):
         dates = [dt.date(2026, 7, d) for d in (13, 13, 15, 17, 20)]
         window = self.select("2026-07-17T15:00", 7, dates)
-        self.assertEqual(window.trading_days_withing_last_n, 2)
-        self.assertEqual(window.trading_days_withing_tv_sort_window, 2)
+        self.assertEqual(window.lookback_sessions, 2)
+        self.assertEqual(window.window_sessions, 2)
         self.assertEqual(window.request_end, "2026-07-15")
 
     def test_zero_counts_fail_separately(self):
@@ -138,7 +138,7 @@ class WindowSelectionTests(unittest.TestCase):
                         now - dt.timedelta(days=7),
                         dates,
                     )
-                    self.assertEqual(window.trading_days_withing_last_n, expected)
+                    self.assertEqual(window.lookback_sessions, expected)
 
     def test_local_lookback_and_close_offsets_across_both_dst_changes(self):
         market = quadrant.MARKET_CONFIG_BY_CODE["u"]
@@ -163,7 +163,7 @@ class WindowSelectionTests(unittest.TestCase):
                     / 3600,
                     elapsed_hours,
                 )
-                self.assertEqual(window.trading_days_withing_last_n, 6)
+                self.assertEqual(window.lookback_sessions, 6)
                 self.assertEqual(
                     quadrant.trading_close_time(market, dates[0]).utcoffset(),
                     dt.timedelta(hours=old_offset),
