@@ -1,11 +1,12 @@
 import io
-import sys
 import tempfile
 import types
 import unittest
 from dataclasses import replace
 from unittest.mock import MagicMock, Mock, call, patch
 from zoneinfo import ZoneInfo
+
+import pandas as pd
 
 import clear_ticker_cache
 import quadrant
@@ -14,6 +15,7 @@ import quadrant
 class FakeTaiwanDailyData:
     def __init__(self, rows):
         self.rows = rows
+        self.columns = ["date", "Trading_money"]
 
     def __getitem__(self, columns):
         if columns != ["date", "Trading_money"]:
@@ -155,11 +157,11 @@ class MarketConfigurationTests(unittest.TestCase):
         japan = quadrant.MARKET_CONFIG_BY_CODE["j"]
 
         self.assertEqual(us.liquidity_source, "fmp")
-        self.assertTrue(us.exclude_intraday_fmp_row)
+        self.assertEqual(us.timezone, "America/New_York")
         self.assertTrue(us.include_bitcoin)
 
         self.assertEqual(taiwan.liquidity_source, "finmind")
-        self.assertFalse(taiwan.exclude_intraday_fmp_row)
+        self.assertEqual(taiwan.timezone, "Asia/Taipei")
         self.assertFalse(taiwan.include_bitcoin)
 
         self.assertEqual(japan.liquidity_source, "fmp")
@@ -222,7 +224,9 @@ class TradingViewHeaderTests(unittest.TestCase):
         with patch("quadrant.httpx.Client", return_value=client):
             for market in quadrant.MARKET_CONFIG_BY_CODE.values():
                 self.assertEqual(
-                    quadrant.fetch_symbols_from_tv(market, top_n_symbols=1),
+                    quadrant.fetch_symbols_from_tv(
+                        market, top_n_symbols=1, sort_window="1W"
+                    ),
                     [("BRK-B", "Berkshire")],
                 )
 
@@ -235,236 +239,177 @@ class TradingViewHeaderTests(unittest.TestCase):
                 self.assertEqual(request.kwargs["headers"], market.tradingview_headers)
                 self.assertEqual(
                     request.kwargs["json"],
-                    quadrant.tradingview_payload(market, limit=1),
+                    quadrant.tradingview_payload(market, limit=1, sort_window="1W"),
                 )
 
 
+def sample_window(code="u", hour=17):
+    market = quadrant.MARKET_CONFIG_BY_CODE[code]
+    now = quadrant.dt.datetime(2026, 7, 17, hour, tzinfo=ZoneInfo(market.timezone))
+    dates = [quadrant.dt.date(2026, 7, day) for day in (10, 13, 14, 15, 16, 17)]
+    return quadrant.select_screening_window(
+        market, now, now - quadrant.dt.timedelta(days=7), dates
+    )
+
+
 class LoadTopCandidatesTests(unittest.TestCase):
-    market = quadrant.MARKET_CONFIG_BY_CODE["u"]
     stocks = [("A", "Alpha; Inc."), ("B", "Beta")]
 
     def test_loader_rejects_a_pool_that_cannot_be_reranked(self):
         with patch("quadrant.fetch_symbols_from_tv") as symbols:
             with self.assertRaisesRegex(ValueError, "top_n_symbols must be greater"):
                 quadrant.load_top_candidates(
-                    market=self.market,
-                    api_key="test-key",
-                    top_n_symbols=2,
-                    top_n_results=2,
+                    quadrant.MARKET_CONFIG_BY_CODE["u"],
+                    "test-key",
+                    2,
+                    2,
+                    window=sample_window(),
                 )
-
         symbols.assert_not_called()
 
     def test_top_candidates_excludes_insufficient_liquidity_data(self):
-        result = quadrant.top_candidates(
-            [
-                quadrant.Candidate("A", "Alpha", trading_dollars=None),
-                quadrant.Candidate("B", "Beta", trading_dollars=2),
-                quadrant.Candidate("C", "Charlie", trading_dollars=1),
-            ],
-            limit=3,
-        )
+        candidates = [
+            quadrant.Candidate("A", "Alpha", trading_dollars=None),
+            quadrant.Candidate("B", "Beta", trading_dollars=2),
+            quadrant.Candidate("C", "Charlie", trading_dollars=1),
+        ]
+        self.assertEqual(quadrant.top_candidates(candidates, 3), candidates[1:])
 
-        self.assertEqual(
-            result,
-            [
-                quadrant.Candidate(symbol="B", description="Beta", trading_dollars=2),
-                quadrant.Candidate(
-                    symbol="C", description="Charlie", trading_dollars=1
-                ),
-            ],
-        )
+    def test_fmp_loader_passes_window_and_ranks_liquidity(self):
+        market = quadrant.MARKET_CONFIG_BY_CODE["u"]
+        window = sample_window()
 
-    def test_fmp_loader_fetches_symbols_and_ranks_by_liquidity(self):
-        today_date = quadrant.dt.date(2026, 7, 17)
-        from_date = (
-            today_date - quadrant.dt.timedelta(days=quadrant.LOOKBACK_DAYS - 1)
-        ).isoformat()
-
-        def trading_dollars(market, symbol, description, from_date, api_key):
+        def trading_dollars(market, symbol, description, api_key, window):
             return quadrant.Candidate(
-                symbol=symbol,
-                description=description,
+                symbol,
+                description,
                 market=market.code,
                 trading_dollars={"A": 1, "B": 2}[symbol],
             )
 
         with (
             patch(
-                "quadrant.today_for_market",
-                return_value=today_date,
-            ) as today,
+                "quadrant.today_for_market", side_effect=AssertionError("clock reread")
+            ),
             patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
             patch(
-                "quadrant.fetch_trading_dollar_fmp",
-                side_effect=trading_dollars,
+                "quadrant.fetch_trading_dollar_fmp", side_effect=trading_dollars
             ) as fetch,
         ):
-            result = quadrant.load_top_candidates(
-                market=self.market,
-                api_key="test-key",
-                top_n_symbols=3,
-                top_n_results=2,
-            )
-
-        self.assertEqual(
-            result,
-            [
-                quadrant.Candidate(symbol="B", description="Beta", trading_dollars=2),
-                quadrant.Candidate(
-                    symbol="A", description="Alpha; Inc.", trading_dollars=1
-                ),
-            ],
+            result = quadrant.load_top_candidates(market, "test-key", 3, 2, window)
+        self.assertEqual([c.symbol for c in result], ["B", "A"])
+        symbols.assert_called_once_with(
+            market=market, top_n_symbols=3, sort_window="1W"
         )
-        symbols.assert_called_once_with(market=self.market, top_n_symbols=3)
-        today.assert_called_once_with(self.market)
         self.assertEqual(
             fetch.call_args_list,
             [
-                call(self.market, "A", "Alpha; Inc.", from_date, "test-key"),
-                call(self.market, "B", "Beta", from_date, "test-key"),
-            ],
-        )
-
-    def test_loader_omits_candidates_without_enough_liquidity_data(self):
-        def trading_dollars(market, symbol, description, from_date, api_key):
-            return quadrant.Candidate(
-                symbol=symbol,
-                description=description,
-                market=market.code,
-                trading_dollars={"A": None, "B": 2}[symbol],
-            )
-
-        with (
-            patch(
-                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
-            ),
-            patch("quadrant.fetch_symbols_from_tv", return_value=self.stocks),
-            patch(
-                "quadrant.fetch_trading_dollar_fmp",
-                side_effect=trading_dollars,
-            ),
-        ):
-            result = quadrant.load_top_candidates(
-                market=self.market,
-                api_key="test-key",
-                top_n_symbols=3,
-                top_n_results=2,
-            )
-
-        self.assertEqual(
-            result,
-            [
-                quadrant.Candidate(
-                    symbol="B", description="Beta", market="u", trading_dollars=2
+                call(
+                    market,
+                    symbol,
+                    description,
+                    "test-key",
+                    window,
                 )
+                for symbol, description in self.stocks
             ],
         )
 
-    def test_taiwan_loader_logs_in_and_ranks_by_liquidity(self):
+    def test_taiwan_loader_logs_in_and_passes_window(self):
         market = quadrant.MARKET_CONFIG_BY_CODE["t"]
-        today_date = quadrant.dt.date(2026, 7, 17)
-        start = (
-            today_date - quadrant.dt.timedelta(days=quadrant.LOOKBACK_DAYS - 1)
-        ).isoformat()
-        finmind = types.ModuleType("FinMind")
-        finmind_data = types.ModuleType("FinMind.data")
-        loader = Mock()
-        data_loader = Mock(return_value=loader)
-        setattr(finmind, "data", finmind_data)
-        setattr(finmind_data, "DataLoader", data_loader)
-
-        def trading_dollars(market, symbol, description, start, end):
-            return quadrant.Candidate(
-                symbol=symbol,
-                description=description,
-                market=market.code,
-                trading_dollars={"A": 1, "B": 2}[symbol],
-            )
-
+        window = sample_window("t")
+        candidates = [
+            quadrant.Candidate("A", "Alpha; Inc.", market="t"),
+            quadrant.Candidate("B", "Beta", market="t", trading_dollars=2),
+        ]
         with (
-            patch.dict(
-                sys.modules,
-                {"FinMind": finmind, "FinMind.data": finmind_data},
-            ),
             patch.dict(quadrant.os.environ, {"FINMIND_KEY": "test-key"}),
+            patch("FinMind.data.DataLoader") as loader,
             patch.object(quadrant, "finmind_api", None),
             patch(
-                "quadrant.today_for_market",
-                return_value=today_date,
-            ) as today,
+                "quadrant.today_for_market", side_effect=AssertionError("clock reread")
+            ),
             patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
+            patch("quadrant.fetch_trading_dollar_tw", side_effect=candidates) as fetch,
             patch("quadrant.fetch_trading_dollars_fmp") as fmp,
-            patch(
-                "quadrant.fetch_trading_dollar_tw",
-                side_effect=trading_dollars,
-            ) as fetch,
         ):
-            result = quadrant.load_top_candidates(
-                market=market,
-                api_key=None,
-                top_n_symbols=3,
-                top_n_results=2,
-            )
-
-        self.assertEqual(
-            result,
-            [
-                quadrant.Candidate(
-                    symbol="B", description="Beta", market="t", trading_dollars=2
-                ),
-                quadrant.Candidate(
-                    symbol="A",
-                    description="Alpha; Inc.",
-                    market="t",
-                    trading_dollars=1,
-                ),
-            ],
-        )
-        data_loader.assert_called_once_with()
-        loader.login_by_token.assert_called_once_with("test-key")
+            result = quadrant.load_top_candidates(market, "test-key", 3, 2, window)
+        self.assertEqual(result, candidates[1:])
+        loader.return_value.login_by_token.assert_called_once_with("test-key")
         symbols.assert_called_once_with(
-            market=market,
-            top_n_symbols=3,
+            market=market, top_n_symbols=3, sort_window="1W"
         )
-        fmp.assert_not_called()
-        today.assert_called_once_with(market)
         self.assertEqual(
             fetch.call_args_list,
             [
-                call(market, "A", "Alpha; Inc.", start, "2026-07-17"),
-                call(market, "B", "Beta", start, "2026-07-17"),
+                call(market, symbol, description, window)
+                for symbol, description in self.stocks
             ],
+        )
+        fmp.assert_not_called()
+
+    def test_japan_keeps_manual_window_and_request_behavior(self):
+        market = quadrant.MARKET_CONFIG_BY_CODE["j"]
+        today = quadrant.dt.date(2026, 7, 17)
+        with (
+            patch.object(quadrant.config, "TV_SORT_WINDOW", "1M", create=True),
+            patch("quadrant.today_for_market", return_value=today),
+            patch(
+                "quadrant.fetch_symbols_from_tv", return_value=self.stocks
+            ) as symbols,
+            patch(
+                "quadrant.fetch_trading_dollar_fmp",
+                return_value=quadrant.Candidate(
+                    "A", "Alpha", market="j", trading_dollars=1
+                ),
+            ) as fetch,
+        ):
+            quadrant.load_top_candidates(market, "test-key", 3, 2)
+        symbols.assert_called_once_with(
+            market=market, top_n_symbols=3, sort_window="1M"
+        )
+        self.assertEqual(
+            fetch.call_args_list[0],
+            call(market, "A", "Alpha; Inc.", "test-key", None),
         )
 
 
 class CandidateLoadingTests(unittest.TestCase):
-    def test_bitcoin_is_added_only_for_markets_that_enable_it(self):
+    def test_bitcoin_and_automatic_pool_are_market_specific(self):
         for code, market in quadrant.MARKET_CONFIG_BY_CODE.items():
-            source_candidates = [
-                quadrant.Candidate(symbol="ABC", description="Example")
-            ]
+            window = sample_window(code) if code != "j" else None
+            source = [quadrant.Candidate("ABC", "Example", market=code)]
             with (
                 self.subTest(market=code),
                 patch("quadrant.current_market_config", return_value=market),
                 patch(
-                    "quadrant.load_top_candidates",
-                    return_value=list(source_candidates),
-                ) as load_top_candidates,
+                    "quadrant.load_screening_window", return_value=window
+                ) as automatic,
+                patch.object(
+                    quadrant.config, "CANDIDATE_POOL_MULTIPLIER", 2, create=True
+                ),
+                patch(
+                    "quadrant.load_top_candidates", return_value=list(source)
+                ) as load,
             ):
                 result = quadrant.load_candidates()
-
-            expected = source_candidates + (
-                [quadrant.Candidate(symbol="BTC", description="Bitcoin", market="c")]
-                if market.include_bitcoin
+            expected = source + (
+                [quadrant.Candidate("BTC", "Bitcoin", market="c")]
+                if code == "u"
                 else []
             )
             self.assertEqual(result, expected)
-            self.assertIs(load_top_candidates.call_args.kwargs["market"], market)
+            self.assertIs(load.call_args.kwargs["window"], window)
+            multiplier = window.candidate_pool_multiplier if window else 2
+            self.assertEqual(
+                load.call_args.kwargs["top_n_symbols"],
+                quadrant.candidate_pool_size(quadrant.RESULT_LIMIT, multiplier),
+            )
+            self.assertEqual(automatic.call_count, int(code != "j"))
 
 
 class GrowthScoringTests(unittest.TestCase):
@@ -544,9 +489,7 @@ class GrowthScoringTests(unittest.TestCase):
 
     def test_scoring_uses_the_expected_endpoints_and_parameters(self):
         candidate = quadrant.Candidate("A", "Alpha")
-        with patch(
-            "quadrant.fetch_score", side_effect=[[0, -2], [0, 0.75]]
-        ) as fetch:
+        with patch("quadrant.fetch_score", side_effect=[[0, -2], [0, 0.75]]) as fetch:
             grown = quadrant.score_growth(candidate)
             scored = quadrant.score_valuation(candidate)
         self.assertEqual(
@@ -963,275 +906,153 @@ class MainTests(unittest.TestCase):
 
 
 class IntradayLiquidityTests(unittest.TestCase):
-    def test_recent_trading_dollars_includes_at_most_last_n_calendar_days(self):
-        with patch.object(quadrant, "LAST_N", 2):
-            total = quadrant.recent_trading_dollars(
-                [
-                    ("2026-07-15", 4),
-                    ("2026-07-17", 10),
-                    ("2026-07-16", 5),
-                ],
-                "ABC",
-                quadrant.dt.date(2026, 7, 17),
-            )
-
-        self.assertEqual(total, 15)
-
-    def test_recent_trading_dollars_does_not_require_a_row_for_every_day(self):
-        with patch.object(quadrant, "LAST_N", 2):
-            total = quadrant.recent_trading_dollars(
-                [("2026-07-17", 10)], "ABC", quadrant.dt.date(2026, 7, 17)
-            )
-
-        self.assertEqual(total, 10)
-
-    def test_recent_trading_dollars_excludes_rows_outside_the_calendar_window(self):
-        with patch.object(quadrant, "LAST_N", 2):
-            total = quadrant.recent_trading_dollars(
-                [
-                    ("2026-07-18", 100),
-                    ("2026-07-17", 10),
-                    ("2026-07-15", 4),
-                    ("2026-07-14", 20),
-                ],
-                "ABC",
-                quadrant.dt.date(2026, 7, 17),
-            )
-
-        self.assertEqual(total, 10)
-
-    def test_recent_trading_dollars_skips_when_no_rows_are_in_the_calendar_window(self):
-        with (
-            patch.object(quadrant, "LAST_N", 2),
-            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+    def test_finmind_skips_empty_or_incomplete_responses(self):
+        window = sample_window("t")
+        for data, missing_columns in (
+            (pd.DataFrame(), "date, Trading_money"),
+            (pd.DataFrame({"date": ["2026-07-17"]}), "Trading_money"),
+            (pd.DataFrame({"Trading_money": [10]}), "date"),
         ):
-            total = quadrant.recent_trading_dollars(
-                [("2026-07-18", 100), ("2026-07-14", 20)],
-                "ABC",
-                quadrant.dt.date(2026, 7, 17),
+            with (
+                self.subTest(columns=list(data.columns)),
+                patch("quadrant.fetch_taiwan_stock_daily", return_value=data),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            ):
+                result = quadrant.fetch_trading_dollar_tw(
+                    quadrant.MARKET_CONFIG_BY_CODE["t"],
+                    "7953",
+                    "Example Corp.",
+                    window,
+                )
+            self.assertEqual(
+                result, quadrant.Candidate("7953", "Example Corp.", market="t")
+            )
+            self.assertEqual(quadrant.top_candidates([result], limit=1), [])
+            self.assertEqual(
+                stderr.getvalue(),
+                "Skipping 7953 trading dollar data: "
+                f"FinMind response missing columns: {missing_columns}\n",
             )
 
-        self.assertIsNone(total)
-        self.assertEqual(
-            stderr.getvalue(), "Skipping ABC trading dollar data: no rows in 2 days\n"
-        )
-
-    def test_fmp_and_finmind_produce_the_same_total_for_equal_notionals(self):
-        fmp_data = [
-            {"date": "2026-07-15", "vwap": 2, "volume": 2},
-            {"date": "2026-07-17", "vwap": 10, "volume": 1},
-            {"date": "2026-07-16", "vwap": 5, "volume": 1},
-        ]
-        finmind_data = FakeTaiwanDailyData(
-            [
-                ("2026-07-15", 4),
-                ("2026-07-17", 10),
-                ("2026-07-16", 5),
-            ]
-        )
-
+    def test_finmind_empty_response_does_not_stop_other_symbols(self):
+        market = quadrant.MARKET_CONFIG_BY_CODE["t"]
+        data_by_symbol = {
+            "7953": pd.DataFrame(),
+            "2330": pd.DataFrame({"date": ["2026-07-17"], "Trading_money": [10]}),
+        }
         with (
-            patch.object(quadrant, "LAST_N", 2),
-            patch("quadrant.new_york_regular_session_in_progress", return_value=False),
-            patch("quadrant.taipei_regular_session_in_progress", return_value=False),
+            patch.dict(quadrant.os.environ, {"FINMIND_KEY": "test-key"}),
+            patch("FinMind.data.DataLoader"),
+            patch.object(quadrant, "finmind_api", None),
             patch(
-                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
+                "quadrant.fetch_taiwan_stock_daily",
+                side_effect=lambda symbol, start, end: data_by_symbol[symbol],
             ),
-            patch("quadrant.cached_get_json", return_value=fmp_data),
-            patch("quadrant.fetch_taiwan_stock_daily", return_value=finmind_data),
+            patch("sys.stderr", new_callable=io.StringIO),
         ):
-            fmp_result = quadrant.fetch_trading_dollar_fmp(
-                quadrant.MARKET_CONFIG_BY_CODE["u"],
-                "ABC",
-                "Example Corp.",
-                "2026-05-22",
-                "test-key",
+            candidates = quadrant.fetch_trading_dollars_tw(
+                market, [("7953", "No data"), ("2330", "TSMC")], sample_window("t")
             )
-            finmind_result = quadrant.fetch_trading_dollar_tw(
-                quadrant.MARKET_CONFIG_BY_CODE["t"],
-                "1234",
-                "Example Corp.",
-                "2026-05-22",
-                "2026-07-17",
-            )
-
-        self.assertEqual(fmp_result.trading_dollars, 15)
-        self.assertEqual(finmind_result.trading_dollars, 15)
-
-    def test_fmp_and_finmind_include_available_rows_in_the_calendar_day_window(self):
-        fmp_data = [{"date": "2026-07-17", "vwap": 10, "volume": 1}]
-        finmind_data = FakeTaiwanDailyData([("2026-07-17", 10)])
-
-        with (
-            patch.object(quadrant, "LAST_N", 2),
-            patch("quadrant.new_york_regular_session_in_progress", return_value=False),
-            patch("quadrant.taipei_regular_session_in_progress", return_value=False),
-            patch(
-                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
-            ),
-            patch("quadrant.cached_get_json", return_value=fmp_data),
-            patch("quadrant.fetch_taiwan_stock_daily", return_value=finmind_data),
-        ):
-            fmp_result = quadrant.fetch_trading_dollar_fmp(
-                quadrant.MARKET_CONFIG_BY_CODE["u"],
-                "ABC",
-                "Example Corp.",
-                "2026-05-22",
-                "test-key",
-            )
-            finmind_result = quadrant.fetch_trading_dollar_tw(
-                quadrant.MARKET_CONFIG_BY_CODE["t"],
-                "1234",
-                "Example Corp.",
-                "2026-05-22",
-                "2026-07-17",
-            )
-
         self.assertEqual(
-            fmp_result,
-            quadrant.Candidate("ABC", "Example Corp.", market="u", trading_dollars=10),
-        )
-        self.assertEqual(
-            finmind_result,
-            quadrant.Candidate("1234", "Example Corp.", market="t", trading_dollars=10),
+            quadrant.top_candidates(candidates, limit=2),
+            [quadrant.Candidate("2330", "TSMC", market="t", trading_dollars=10)],
         )
 
-    def test_new_york_regular_session_boundaries(self):
-        timezone = quadrant.NEW_YORK_TIMEZONE
-
-        for hour, minute, expected in [
-            (9, 29, False),
-            (9, 30, True),
-            (15, 59, True),
-            (16, 0, False),
-        ]:
-            with self.subTest(hour=hour, minute=minute):
-                now = quadrant.dt.datetime(2026, 7, 17, hour, minute, tzinfo=timezone)
+    def test_fmp_and_finmind_use_identical_close_boundaries(self):
+        for code in ("u", "t"):
+            market = quadrant.MARKET_CONFIG_BY_CODE[code]
+            close = quadrant.trading_close_time(market, quadrant.dt.date(2026, 7, 17))
+            for delta, expected in ((-1, 15), (0, 115), (1, 111)):
+                now = close + quadrant.dt.timedelta(seconds=delta)
+                dates = [quadrant.dt.date(2026, 7, d) for d in (10, 13, 16, 17)]
+                window = quadrant.select_screening_window(
+                    market, now, now - quadrant.dt.timedelta(days=7), dates
+                )
+                # The oldest close is included at the exact lower boundary too.
+                rows = [
+                    ("2026-07-09", 1000),
+                    ("2026-07-10", 4),
+                    ("2026-07-13", 1),
+                    ("2026-07-16", 10),
+                    ("2026-07-17", 100),
+                    ("2026-07-18", 1000),
+                ]
+                with (
+                    self.subTest(code=code, delta=delta),
+                    patch(
+                        "quadrant.today_for_market",
+                        side_effect=AssertionError("clock reread"),
+                    ),
+                    patch(
+                        "quadrant.cached_get_json",
+                        return_value=[
+                            {"date": date, "vwap": value, "volume": 1}
+                            for date, value in rows
+                        ],
+                    ) as fmp,
+                    patch(
+                        "quadrant.fetch_taiwan_stock_daily",
+                        return_value=FakeTaiwanDailyData(rows),
+                    ) as finmind,
+                ):
+                    if code == "u":
+                        result = quadrant.fetch_trading_dollar_fmp(
+                            market,
+                            "ABC",
+                            "Example",
+                            "test-key",
+                            window,
+                        )
+                        self.assertIn(
+                            ("to", window.request_end), fmp.call_args.kwargs["params"]
+                        )
+                    else:
+                        result = quadrant.fetch_trading_dollar_tw(
+                            market, "1234", "Example", window
+                        )
+                        finmind.assert_called_once_with(
+                            "1234", window.request_start, window.request_end
+                        )
+                self.assertEqual(result.trading_dollars, expected)
                 self.assertEqual(
-                    quadrant.new_york_regular_session_in_progress(now), expected
+                    window.request_end, "2026-07-16" if delta < 0 else "2026-07-17"
                 )
 
-    def test_taipei_regular_session_boundaries(self):
-        timezone = quadrant.TAIPEI_TIMEZONE
-
-        for hour, minute, expected in [
-            (8, 59, False),
-            (9, 0, True),
-            (13, 29, True),
-            (13, 30, False),
-        ]:
-            with self.subTest(hour=hour, minute=minute):
-                now = quadrant.dt.datetime(2026, 7, 17, hour, minute, tzinfo=timezone)
-                self.assertEqual(
-                    quadrant.taipei_regular_session_in_progress(now), expected
-                )
-
-    def test_finmind_excludes_todays_row_during_taipei_regular_session(self):
-        data = FakeTaiwanDailyData(
-            [
-                ("2026-07-17", 100),
-                ("2026-07-16", 5),
-                ("2026-07-15", 4),
-            ]
-        )
-
-        with (
-            patch.object(quadrant, "LAST_N", 2),
-            patch("quadrant.taipei_regular_session_in_progress", return_value=True),
-            patch(
-                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
-            ) as today,
-            patch("quadrant.fetch_taiwan_stock_daily", return_value=data),
-        ):
-            result = quadrant.fetch_trading_dollar_tw(
-                quadrant.MARKET_CONFIG_BY_CODE["t"],
-                "1234",
-                "Example Corp.",
-                "2026-05-22",
-                "2026-07-17",
-            )
-
-        today.assert_called_once_with(quadrant.MARKET_CONFIG_BY_CODE["t"])
-        self.assertEqual(
-            result,
-            quadrant.Candidate("1234", "Example Corp.", market="t", trading_dollars=5),
-        )
-
-    def test_fmp_excludes_todays_row_during_new_york_regular_session(self):
-        data = [
-            {"date": "2026-07-17", "vwap": 100, "volume": 1},
-            {"date": "2026-07-16", "vwap": 5, "volume": 1},
-            {"date": "2026-07-15", "vwap": 4, "volume": 1},
-        ]
-
-        with (
-            patch.object(quadrant, "LAST_N", 2),
-            patch("quadrant.new_york_regular_session_in_progress", return_value=True),
-            patch(
-                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
-            ) as today,
-            patch("quadrant.cached_get_json", return_value=data) as fetch,
-        ):
-            result = quadrant.fetch_trading_dollar_fmp(
-                quadrant.MARKET_CONFIG_BY_CODE["u"],
+    def test_no_available_liquidity_rows_skips_symbol(self):
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            result = quadrant.recent_trading_dollars(
+                [("2026-07-01", 10)],
                 "ABC",
-                "Example Corp.",
-                "2026-05-22",
-                "test-key",
+                quadrant.MARKET_CONFIG_BY_CODE["u"],
+                sample_window(),
             )
+        self.assertIsNone(result)
+        self.assertIn("Skipping ABC trading dollar data", stderr.getvalue())
 
-        today.assert_called_once_with(quadrant.MARKET_CONFIG_BY_CODE["u"])
-        fetch.assert_called_once_with(
-            quadrant.FMP_STABLE_URL,
-            params=[
-                ("apikey", "test-key"),
-                ("from", "2026-05-22"),
-                ("symbol", "ABC"),
-            ],
-        )
-        self.assertEqual(
-            result,
-            quadrant.Candidate("ABC", "Example Corp.", market="u", trading_dollars=5),
-        )
-
-    def test_fmp_keeps_todays_row_outside_the_us_market(self):
+    def test_japan_retains_calendar_date_filter_and_legacy_request(self):
+        market = quadrant.MARKET_CONFIG_BY_CODE["j"]
         data = {
             "historical": [
                 {"date": "2026-07-17", "vwap": 100, "volume": 1},
                 {"date": "2026-07-16", "vwap": 5, "volume": 1},
+                {"date": "2026-07-15", "vwap": 4, "volume": 1},
             ]
         }
-
         with (
             patch.object(quadrant, "LAST_N", 2),
-            patch(
-                "quadrant.new_york_regular_session_in_progress", return_value=True
-            ) as in_session,
             patch(
                 "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
             ),
             patch("quadrant.cached_get_json", return_value=data) as fetch,
         ):
             result = quadrant.fetch_trading_dollar_fmp(
-                quadrant.MARKET_CONFIG_BY_CODE["j"],
-                "7203",
-                "Toyota",
-                "2026-05-22",
-                "test-key",
+                market, "7203", "Toyota", "test-key"
             )
-
-        in_session.assert_not_called()
         fetch.assert_called_once_with(
             f"{quadrant.FMP_LEGACY_URL}/7203.T",
-            params=[
-                ("apikey", "test-key"),
-                ("from", "2026-05-22"),
-            ],
+            params=[("apikey", "test-key"), ("from", "2026-05-18")],
         )
-        self.assertEqual(
-            result,
-            quadrant.Candidate("7203", "Toyota", market="j", trading_dollars=105),
-        )
+        self.assertEqual(result.trading_dollars, 105)
 
 
 if __name__ == "__main__":

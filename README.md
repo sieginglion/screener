@@ -15,7 +15,7 @@ Use `uv run` for commands; `./ranker.py` invokes it automatically. Create an unc
 Add only the credentials you need to `.env`:
 
 ```dotenv
-FMP_API_KEY=...       # US/Japan liquidity
+FMP_API_KEY=...       # US/Taiwan reference history; US/Japan liquidity
 FINMIND_KEY=...       # Taiwan liquidity
 OPENAI_API_KEY=...    # Ranking panel
 GOOGLE_API_KEY=...    # Or GEMINI_API_KEY
@@ -30,6 +30,29 @@ Start the scoring service at `http://localhost:8080`, then generate a `ticker,de
 ```sh
 uv run python quadrant.py > 16.csv
 ```
+
+For US and Taiwan, set `LAST_N` to `7`, `14`, or `28`; omit
+`TV_SORT_WINDOW` and `CANDIDATE_POOL_MULTIPLIER`. The screener captures the
+market-local time once and subtracts `LAST_N` days, keeping the same local clock
+time across daylight saving changes. It fetches fresh FMP reference dates
+(NVDA for US, legacy 2330.TW for Taiwan) and counts completed trading days whose
+local close falls within the inclusive lookback boundaries: 16:00 New York or
+13:30 Taipei.
+
+TradingView's `1W` starts Monday at local midnight; `1M` starts on the first.
+Only windows starting at or after the lookback boundary are eligible, even at
+month-end with `LAST_N = 28`. The window covering the most completed reference
+trading days wins; ties prefer `1W`. The candidate-pool multiplier is
+`trading_days_withing_last_n / trading_days_withing_tv_sort_window * 1.1`, and
+the pool size is `ceil(RESULT_LIMIT * multiplier)`.
+
+US FMP and Taiwan FinMind liquidity use the same inclusive close-time
+boundaries. Their 12-hour cached requests end at the latest completed reference
+date, so in-progress sessions are not requested. Reference history is
+never cached. Missing FMP credentials, unusable reference history, or zero
+completed trading days in either count stop screening with an error and no CSV.
+Taiwan also requires `FINMIND_KEY` for liquidity. Japan retains its existing
+manual window, multiplier, and liquidity behavior.
 
 The screener ranks revenue and EPS growth separately, averages their available
 ranks, and requests PS and PE scores only for the best-growth half (rounded up).
