@@ -73,6 +73,36 @@ class CachedGetJsonTests(unittest.TestCase):
 
         self.assertEqual(get.call_count, 2)
 
+    def test_finmind_cache_is_reused_across_clients_with_the_existing_key(self):
+        rows = pd.DataFrame({"date": ["2026-07-17"], "Trading_money": [10]})
+        first_client = Mock()
+        first_client.taiwan_stock_daily.return_value = rows
+        second_client = Mock()
+        args = ("2330", "2026-07-10", "2026-07-17")
+
+        pd.testing.assert_frame_equal(
+            quadrant.fetch_taiwan_stock_daily(*args, client=first_client), rows
+        )
+        key = (quadrant.__name__, "fetch_taiwan_stock_daily", args, ())
+        self.assertIn(key, self.cache)
+        pd.testing.assert_frame_equal(
+            quadrant.fetch_taiwan_stock_daily(*args, client=second_client), rows
+        )
+        first_client.taiwan_stock_daily.assert_called_once_with(
+            stock_id=args[0], start_date=args[1], end_date=args[2]
+        )
+        second_client.taiwan_stock_daily.assert_not_called()
+
+    def test_finmind_does_not_cache_failed_requests(self):
+        client = Mock()
+        client.taiwan_stock_daily.side_effect = RuntimeError("unavailable")
+        for _ in range(2):
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                quadrant.fetch_taiwan_stock_daily(
+                    "2330", "2026-07-10", "2026-07-17", client=client
+                )
+        self.assertEqual(client.taiwan_stock_daily.call_count, 2)
+
 
 class FetchScoreTests(unittest.TestCase):
     def test_returns_the_raw_json_response(self):
@@ -298,7 +328,6 @@ class LoadTopCandidatesTests(unittest.TestCase):
         with (
             patch.dict(quadrant.os.environ, {"FINMIND_KEY": "test-key"}),
             patch("FinMind.data.DataLoader") as loader,
-            patch.object(quadrant, "finmind_api", None),
             patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
@@ -314,7 +343,7 @@ class LoadTopCandidatesTests(unittest.TestCase):
         self.assertEqual(
             fetch.call_args_list,
             [
-                call(market, symbol, description, window)
+                call(market, symbol, description, window, client=loader.return_value)
                 for symbol, description in self.stocks
             ],
         )
@@ -501,14 +530,22 @@ class GrowthScoringTests(unittest.TestCase):
         self.assertIsNone(bitcoin.eps_growth)
         self.assertEqual(stock.revenue_growth, -3)
 
-    def test_growth_scoring_always_runs_and_skips_failed_requests(self):
-        candidates = [quadrant.Candidate("A", "Alpha"), quadrant.Candidate("B", "Beta")]
-        with patch("quadrant.score_growth", side_effect=[candidates[0], None]) as score:
-            result = quadrant.score_growth_candidates(candidates)
-        self.assertEqual(result, candidates[:1])
-        self.assertEqual(
-            score.call_args_list, [call(candidate) for candidate in candidates]
-        )
+    def test_batch_scoring_preserves_order_and_skips_failed_requests(self):
+        candidates = [quadrant.Candidate(symbol, symbol) for symbol in "ABC"]
+        for workers in (None, 2):
+            with self.subTest(max_workers=workers):
+                score = Mock(side_effect=lambda c: None if c.symbol == "B" else c)
+                result = quadrant.score_candidates(
+                    iter(candidates), score, max_workers=workers
+                )
+                self.assertEqual(result, [candidates[0], candidates[2]])
+                self.assertEqual(score.call_count, len(candidates))
+                score.assert_has_calls([call(c) for c in candidates], any_order=True)
+                score.reset_mock()
+                self.assertEqual(
+                    quadrant.score_candidates([], score, max_workers=workers), []
+                )
+                score.assert_not_called()
 
 
 class RankingTests(unittest.TestCase):
@@ -865,6 +902,7 @@ class IntradayLiquidityTests(unittest.TestCase):
                     "7953",
                     "Example Corp.",
                     window,
+                    client=Mock(),
                 )
             self.assertEqual(
                 result, quadrant.Candidate("7953", "Example Corp.", market="t")
@@ -885,10 +923,11 @@ class IntradayLiquidityTests(unittest.TestCase):
         with (
             patch.dict(quadrant.os.environ, {"FINMIND_KEY": "test-key"}),
             patch("FinMind.data.DataLoader"),
-            patch.object(quadrant, "finmind_api", None),
             patch(
                 "quadrant.fetch_taiwan_stock_daily",
-                side_effect=lambda symbol, start, end: data_by_symbol[symbol],
+                side_effect=lambda symbol, start, end, *, client: data_by_symbol[
+                    symbol
+                ],
             ),
             patch("sys.stderr", new_callable=io.StringIO),
         ):
@@ -945,11 +984,15 @@ class IntradayLiquidityTests(unittest.TestCase):
                             ("to", window.request_end), fmp.call_args.kwargs["params"]
                         )
                     else:
+                        client = Mock()
                         result = quadrant.fetch_trading_dollar_tw(
-                            market, "1234", "Example", window
+                            market, "1234", "Example", window, client=client
                         )
                         finmind.assert_called_once_with(
-                            "1234", window.request_start, window.request_end
+                            "1234",
+                            window.request_start,
+                            window.request_end,
+                            client=client,
                         )
                 self.assertEqual(result.trading_dollars, expected)
                 self.assertEqual(

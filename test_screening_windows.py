@@ -232,8 +232,7 @@ class ReferenceHistoryTests(unittest.TestCase):
                         }
                     ),
                 ) as finmind,
-                patch("FinMind.data.DataLoader"),
-                patch.object(quadrant, "finmind_api", None),
+                patch("FinMind.data.DataLoader") as loader,
             ):
                 clock.now.side_effect = [now]
                 candidates = quadrant.load_candidates()
@@ -247,7 +246,9 @@ class ReferenceHistoryTests(unittest.TestCase):
             if code == "u":
                 self.assertIn(("to", "2026-07-16"), fmp.call_args.kwargs["params"])
             else:
-                finmind.assert_called_once_with("ABC", "2026-07-10", "2026-07-16")
+                finmind.assert_called_once_with(
+                    "ABC", "2026-07-10", "2026-07-16", client=loader.return_value
+                )
 
     def test_endpoints_parameters_freshness_and_one_local_clock_capture(self):
         for code in ("u", "t"):
@@ -373,7 +374,6 @@ class CompletedHistoryCacheTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as path,
                 quadrant.Cache(path) as cache,
                 patch.object(quadrant, "cache", cache),
-                patch.object(quadrant, "finmind_api", finmind),
                 patch("quadrant.httpx.get", return_value=response) as get,
             ):
 
@@ -387,7 +387,7 @@ class CompletedHistoryCacheTests(unittest.TestCase):
                             window,
                         )
                     return quadrant.fetch_trading_dollar_tw(
-                        market, "1234", "Example", window
+                        market, "1234", "Example", window, client=finmind
                     )
 
                 self.assertEqual(fetch(before).trading_dollars, 10)

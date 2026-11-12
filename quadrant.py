@@ -31,7 +31,6 @@ FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
 cache = Cache(Path().resolve() / ".cache")
-finmind_api: Any = None
 
 
 def candidate_pool_size(result_limit: int, multiplier: float) -> int:
@@ -526,13 +525,16 @@ def fetch_trading_dollars_fmp(
     ]
 
 
-@cached(43200)
-def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str):
-    df = finmind_api.taiwan_stock_daily(
+def fetch_taiwan_stock_daily(stock_id: str, start: str, end: str, *, client: Any):
+    key = (__name__, "fetch_taiwan_stock_daily", (stock_id, start, end), ())
+    if key in cache:
+        return cache[key]
+    df = client.taiwan_stock_daily(
         stock_id=stock_id,
         start_date=start,
         end_date=end,
     )
+    cache.set(key, df, 43200)
     return df
 
 
@@ -541,8 +543,12 @@ def fetch_trading_dollar_tw(
     stock_id: str,
     description: str,
     window: ScreeningWindow,
+    *,
+    client: Any,
 ) -> Candidate:
-    df = fetch_taiwan_stock_daily(stock_id, window.request_start, window.request_end)
+    df = fetch_taiwan_stock_daily(
+        stock_id, window.request_start, window.request_end, client=client
+    )
     columns = ["date", "Trading_money"]
     missing_columns = [column for column in columns if column not in df.columns]
     if missing_columns:
@@ -571,22 +577,22 @@ def fetch_trading_dollars_tw(
     stocks: Iterable[tuple[str, str]],
     window: ScreeningWindow,
 ) -> list[Candidate]:
-    global finmind_api
-
     finmind_key = os.environ.get("FINMIND_KEY")
     if not finmind_key:
         raise ValueError("FINMIND_KEY is required for Taiwanese liquidity data.")
 
     from FinMind.data import DataLoader
 
-    finmind_api = DataLoader()
-    finmind_api.login_by_token(finmind_key)
+    client = DataLoader()
+    client.login_by_token(finmind_key)
 
     sys.stderr.write("Fetching trading dollar data from FinMind...\n")
     with ThreadPoolExecutor(max_workers=FINMIND_THREADS) as pool:
         return list(
             pool.map(
-                lambda s: fetch_trading_dollar_tw(market, s[0], s[1], window),
+                lambda s: fetch_trading_dollar_tw(
+                    market, s[0], s[1], window, client=client
+                ),
                 stocks,
             )
         )
@@ -617,25 +623,18 @@ def load_top_candidates(
     return top_candidates(liquidity, top_n_results)
 
 
-def score_growth_candidates(candidates: Iterable[Candidate]) -> list[Candidate]:
-    with ThreadPoolExecutor(max_workers=GROWTH_CONCURRENCY) as executor:
-        scored = [
-            scored_candidate
-            for scored_candidate in executor.map(score_growth, candidates)
-            if scored_candidate is not None
-        ]
-    return scored
-
-
-def score_all_valuations(
+def score_candidates(
     candidates: Iterable[Candidate],
+    scorer: Callable[[Candidate], Candidate | None],
+    *,
+    max_workers: int | None = None,
 ) -> list[Candidate]:
-    scored = [
-        scored_candidate
-        for scored_candidate in (score_valuation(candidate) for candidate in candidates)
-        if scored_candidate is not None
-    ]
-    return scored
+    if max_workers is None:
+        scored = map(scorer, candidates)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            scored = list(executor.map(scorer, candidates))
+    return [candidate for candidate in scored if candidate is not None]
 
 
 def load_candidates() -> list[Candidate]:
@@ -749,9 +748,11 @@ def main() -> int:
     except ScreeningWindowError as exc:
         sys.stderr.write(f"Screening stopped: {exc}\n")
         return 1
-    growth_candidates = score_growth_candidates(candidates)
+    growth_candidates = score_candidates(
+        candidates, score_growth, max_workers=GROWTH_CONCURRENCY
+    )
     selected_candidates = select_growth_candidates(growth_candidates)
-    scored_candidates = score_all_valuations(selected_candidates)
+    scored_candidates = score_candidates(selected_candidates, score_valuation)
     ranked_candidates = rank_candidates(scored_candidates)
 
     write_results(ranked_candidates)
