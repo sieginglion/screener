@@ -10,12 +10,12 @@ Requires Python 3.12 and [uv](https://docs.astral.sh/uv/):
 uv sync
 ```
 
-Use `uv run` for commands; `./ranker.py` invokes it automatically. Create an uncommitted `config.py` with the settings required by `quadrant.py`, including market: `u` (US), `t` (Taiwan), or `j` (Japan).
+Use `uv run` for commands; `./ranker.py` invokes it automatically. Create an uncommitted `config.py` with the settings required by `quadrant.py`, including market: `u` (US) or `t` (Taiwan).
 
 Add only the credentials you need to `.env`:
 
 ```dotenv
-FMP_API_KEY=...       # US/Taiwan reference history; US/Japan liquidity
+FMP_API_KEY=...       # US/Taiwan reference history; US liquidity
 FINMIND_KEY=...       # Taiwan liquidity
 OPENAI_API_KEY=...    # Ranking panel
 GOOGLE_API_KEY=...    # Or GEMINI_API_KEY
@@ -31,8 +31,7 @@ Start the scoring service at `http://localhost:8080`, then generate a `ticker,de
 uv run python quadrant.py > 16.csv
 ```
 
-For US and Taiwan, set `LAST_N` to `7`, `14`, or `28`; omit
-`TV_SORT_WINDOW` and `CANDIDATE_POOL_MULTIPLIER`. The screener captures the
+Set `LAST_N` to `7`, `14`, or `28`. The screener captures the
 market-local time once and subtracts `LAST_N` days, keeping the same local clock
 time across daylight saving changes. It fetches fresh FMP reference dates
 (NVDA for US, legacy 2330.TW for Taiwan) and counts completed trading days whose
@@ -51,8 +50,7 @@ boundaries. Their 12-hour cached requests end at the latest completed reference
 date, so in-progress sessions are not requested. Reference history is
 never cached. Missing FMP credentials, unusable reference history, or zero
 completed trading days in either count stop screening with an error and no CSV.
-Taiwan also requires `FINMIND_KEY` for liquidity. Japan retains its existing
-manual window, multiplier, and liquidity behavior.
+Taiwan also requires `FINMIND_KEY` for liquidity.
 
 The screener ranks revenue and EPS growth separately, averages their available
 ranks, and requests PS and PE scores only for the best-growth half (rounded up).

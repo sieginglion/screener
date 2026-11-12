@@ -191,7 +191,7 @@ class ReferenceHistoryTests(unittest.TestCase):
                 window = quadrant.load_screening_window(market, 7, "test-key")
             self.assertEqual(window.lookback_start, local_now("u", f"{before}T16:00"))
 
-    def test_candidate_pipeline_uses_one_clock_and_ignores_manual_settings(self):
+    def test_candidate_pipeline_uses_one_clock(self):
         for code in ("u", "t"):
             market = quadrant.MARKET_CONFIG_BY_CODE[code]
             now = local_now(code, "2026-07-17T12:00")
@@ -208,10 +208,6 @@ class ReferenceHistoryTests(unittest.TestCase):
                 patch("quadrant.current_market_config", return_value=market),
                 patch.object(quadrant, "LAST_N", 7),
                 patch.object(quadrant, "RESULT_LIMIT", 2),
-                patch.object(quadrant.config, "TV_SORT_WINDOW", "invalid", create=True),
-                patch.object(
-                    quadrant.config, "CANDIDATE_POOL_MULTIPLIER", 0, create=True
-                ),
                 patch.dict(
                     quadrant.os.environ,
                     {"FMP_API_KEY": "test-key", "FINMIND_KEY": "test-key"},
@@ -379,10 +375,6 @@ class CompletedHistoryCacheTests(unittest.TestCase):
                 patch.object(quadrant, "cache", cache),
                 patch.object(quadrant, "finmind_api", finmind),
                 patch("quadrant.httpx.get", return_value=response) as get,
-                patch(
-                    "quadrant.today_for_market",
-                    side_effect=AssertionError("clock reread"),
-                ),
             ):
 
                 def fetch(window):

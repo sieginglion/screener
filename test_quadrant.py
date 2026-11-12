@@ -128,21 +128,6 @@ class MarketConfigurationTests(unittest.TestCase):
                 quadrant.MARKET_CONFIG_BY_CODE["u"],
             )
 
-    def test_today_for_market_uses_the_configured_timezone(self):
-        expected_today = quadrant.dt.date(2026, 7, 17)
-
-        for market in quadrant.MARKET_CONFIG_BY_CODE.values():
-            with (
-                self.subTest(market=market.code),
-                patch.object(quadrant, "current_market_config") as current_config,
-                patch.object(quadrant.dt, "datetime") as datetime,
-            ):
-                datetime.now.return_value.date.return_value = expected_today
-
-                self.assertEqual(quadrant.today_for_market(market), expected_today)
-                datetime.now.assert_called_once_with(ZoneInfo(market.timezone))
-                current_config.assert_not_called()
-
     def test_candidate_records_its_market(self):
         for code, market in quadrant.MARKET_CONFIG_BY_CODE.items():
             with self.subTest(market=code):
@@ -154,7 +139,6 @@ class MarketConfigurationTests(unittest.TestCase):
     def test_market_configs_capture_provider_specific_behavior(self):
         us = quadrant.MARKET_CONFIG_BY_CODE["u"]
         taiwan = quadrant.MARKET_CONFIG_BY_CODE["t"]
-        japan = quadrant.MARKET_CONFIG_BY_CODE["j"]
 
         self.assertEqual(us.liquidity_source, "fmp")
         self.assertEqual(us.timezone, "America/New_York")
@@ -163,10 +147,6 @@ class MarketConfigurationTests(unittest.TestCase):
         self.assertEqual(taiwan.liquidity_source, "finmind")
         self.assertEqual(taiwan.timezone, "Asia/Taipei")
         self.assertFalse(taiwan.include_bitcoin)
-
-        self.assertEqual(japan.liquidity_source, "fmp")
-        self.assertTrue(japan.fmp_legacy)
-        self.assertEqual(japan.fmp_symbol_suffix, ".T")
 
 
 class TradingViewHeaderTests(unittest.TestCase):
@@ -196,12 +176,6 @@ class TradingViewHeaderTests(unittest.TestCase):
             "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
         },
-        "j": {
-            "origin": "https://jp.tradingview.com",
-            "referer": "https://jp.tradingview.com/",
-            "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
-            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-        },
     }
 
     def test_effective_headers_match_the_market_contract(self):
@@ -230,7 +204,7 @@ class TradingViewHeaderTests(unittest.TestCase):
                     [("BRK-B", "Berkshire")],
                 )
 
-        self.assertEqual(len(client.post.call_args_list), 3)
+        self.assertEqual(len(client.post.call_args_list), 2)
         for market, request in zip(
             quadrant.MARKET_CONFIG_BY_CODE.values(), client.post.call_args_list
         ):
@@ -289,9 +263,6 @@ class LoadTopCandidatesTests(unittest.TestCase):
 
         with (
             patch(
-                "quadrant.today_for_market", side_effect=AssertionError("clock reread")
-            ),
-            patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
             patch(
@@ -329,9 +300,6 @@ class LoadTopCandidatesTests(unittest.TestCase):
             patch("FinMind.data.DataLoader") as loader,
             patch.object(quadrant, "finmind_api", None),
             patch(
-                "quadrant.today_for_market", side_effect=AssertionError("clock reread")
-            ),
-            patch(
                 "quadrant.fetch_symbols_from_tv", return_value=self.stocks
             ) as symbols,
             patch("quadrant.fetch_trading_dollar_tw", side_effect=candidates) as fetch,
@@ -352,36 +320,11 @@ class LoadTopCandidatesTests(unittest.TestCase):
         )
         fmp.assert_not_called()
 
-    def test_japan_keeps_manual_window_and_request_behavior(self):
-        market = quadrant.MARKET_CONFIG_BY_CODE["j"]
-        today = quadrant.dt.date(2026, 7, 17)
-        with (
-            patch.object(quadrant.config, "TV_SORT_WINDOW", "1M", create=True),
-            patch("quadrant.today_for_market", return_value=today),
-            patch(
-                "quadrant.fetch_symbols_from_tv", return_value=self.stocks
-            ) as symbols,
-            patch(
-                "quadrant.fetch_trading_dollar_fmp",
-                return_value=quadrant.Candidate(
-                    "A", "Alpha", market="j", trading_dollars=1
-                ),
-            ) as fetch,
-        ):
-            quadrant.load_top_candidates(market, "test-key", 3, 2)
-        symbols.assert_called_once_with(
-            market=market, top_n_symbols=3, sort_window="1M"
-        )
-        self.assertEqual(
-            fetch.call_args_list[0],
-            call(market, "A", "Alpha; Inc.", "test-key", None),
-        )
-
 
 class CandidateLoadingTests(unittest.TestCase):
     def test_bitcoin_and_automatic_pool_are_market_specific(self):
         for code, market in quadrant.MARKET_CONFIG_BY_CODE.items():
-            window = sample_window(code) if code != "j" else None
+            window = sample_window(code)
             source = [quadrant.Candidate("ABC", "Example", market=code)]
             with (
                 self.subTest(market=code),
@@ -389,9 +332,6 @@ class CandidateLoadingTests(unittest.TestCase):
                 patch(
                     "quadrant.load_screening_window", return_value=window
                 ) as automatic,
-                patch.object(
-                    quadrant.config, "CANDIDATE_POOL_MULTIPLIER", 2, create=True
-                ),
                 patch(
                     "quadrant.load_top_candidates", return_value=list(source)
                 ) as load,
@@ -404,12 +344,14 @@ class CandidateLoadingTests(unittest.TestCase):
             )
             self.assertEqual(result, expected)
             self.assertIs(load.call_args.kwargs["window"], window)
-            multiplier = window.candidate_pool_multiplier if window else 2
+            multiplier = window.candidate_pool_multiplier
             self.assertEqual(
                 load.call_args.kwargs["top_n_symbols"],
                 quadrant.candidate_pool_size(quadrant.RESULT_LIMIT, multiplier),
             )
-            self.assertEqual(automatic.call_count, int(code != "j"))
+            automatic.assert_called_once_with(
+                market, quadrant.LAST_N, quadrant.os.environ.get("FMP_API_KEY")
+            )
 
 
 class GrowthScoringTests(unittest.TestCase):
@@ -980,10 +922,6 @@ class IntradayLiquidityTests(unittest.TestCase):
                 with (
                     self.subTest(code=code, delta=delta),
                     patch(
-                        "quadrant.today_for_market",
-                        side_effect=AssertionError("clock reread"),
-                    ),
-                    patch(
                         "quadrant.cached_get_json",
                         return_value=[
                             {"date": date, "vwap": value, "volume": 1}
@@ -1028,31 +966,6 @@ class IntradayLiquidityTests(unittest.TestCase):
             )
         self.assertIsNone(result)
         self.assertIn("Skipping ABC trading dollar data", stderr.getvalue())
-
-    def test_japan_retains_calendar_date_filter_and_legacy_request(self):
-        market = quadrant.MARKET_CONFIG_BY_CODE["j"]
-        data = {
-            "historical": [
-                {"date": "2026-07-17", "vwap": 100, "volume": 1},
-                {"date": "2026-07-16", "vwap": 5, "volume": 1},
-                {"date": "2026-07-15", "vwap": 4, "volume": 1},
-            ]
-        }
-        with (
-            patch.object(quadrant, "LAST_N", 2),
-            patch(
-                "quadrant.today_for_market", return_value=quadrant.dt.date(2026, 7, 17)
-            ),
-            patch("quadrant.cached_get_json", return_value=data) as fetch,
-        ):
-            result = quadrant.fetch_trading_dollar_fmp(
-                market, "7203", "Toyota", "test-key"
-            )
-        fetch.assert_called_once_with(
-            f"{quadrant.FMP_LEGACY_URL}/7203.T",
-            params=[("apikey", "test-key"), ("from", "2026-05-18")],
-        )
-        self.assertEqual(result.trading_dollars, 105)
 
 
 if __name__ == "__main__":

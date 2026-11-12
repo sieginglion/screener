@@ -15,7 +15,6 @@ import httpx
 from diskcache import Cache
 from dotenv import load_dotenv
 
-import config
 from config import (
     BTC_GROWTH_MULTIPLIER,
     FINMIND_THREADS,
@@ -29,10 +28,8 @@ from config import (
 SCORING_BASE_URL = "http://localhost:8080"
 FMP_STABLE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3/historical-price-full"
-LOOKBACK_DAYS = 61
 TV_US_URL = "https://scanner.tradingview.com/america/scan?label-product=screener-stock"
 TV_TW_URL = "https://scanner.tradingview.com/taiwan/scan?label-product=screener-stock"
-TV_JP_URL = "https://scanner.tradingview.com/japan/scan?label-product=screener-stock"
 cache = Cache(Path().resolve() / ".cache")
 finmind_api: Any = None
 
@@ -105,14 +102,6 @@ TV_TW_HEADERS = {
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
 }
 
-TV_JP_HEADERS = {
-    **TV_COMMON_HEADERS,
-    "origin": "https://jp.tradingview.com",
-    "referer": "https://jp.tradingview.com/",
-    "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
-    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-}
-
 
 @dataclass(frozen=True)
 class MarketConfig:
@@ -123,8 +112,6 @@ class MarketConfig:
     tradingview_market: str
     language: str
     liquidity_source: str
-    fmp_legacy: bool = False
-    fmp_symbol_suffix: str = ""
     include_bitcoin: bool = False
 
 
@@ -148,26 +135,11 @@ MARKET_CONFIG_BY_CODE = {
         language="zh_TW",
         liquidity_source="finmind",
     ),
-    "j": MarketConfig(
-        code="j",
-        timezone="Asia/Tokyo",
-        tradingview_url=TV_JP_URL,
-        tradingview_headers=TV_JP_HEADERS,
-        tradingview_market="japan",
-        language="ja",
-        liquidity_source="fmp",
-        fmp_legacy=True,
-        fmp_symbol_suffix=".T",
-    ),
 }
 
 
 def current_market_config() -> MarketConfig:
     return MARKET_CONFIG_BY_CODE.get(MARKET, MARKET_CONFIG_BY_CODE["u"])
-
-
-def today_for_market(market: MarketConfig) -> dt.date:
-    return dt.datetime.now(ZoneInfo(market.timezone)).date()
 
 
 class ScreeningWindowError(ValueError):
@@ -484,27 +456,15 @@ def recent_trading_dollars(
     rows: Iterable[tuple[str, float]],
     symbol: str,
     market: MarketConfig,
-    window: ScreeningWindow | None = None,
+    window: ScreeningWindow,
 ) -> float | None:
-    if window is not None:
-        recent_rows = [
-            row
-            for row in rows
-            if window.lookback_start
-            <= trading_close_time(market, dt.date.fromisoformat(row[0]))
-            <= window.now
-        ]
-    else:
-        if market.code != "j":
-            raise ScreeningWindowError(
-                "US/Taiwan liquidity requires a screening window."
-            )
-        today = today_for_market(market)
-        recent_rows = [
-            row
-            for row in rows
-            if 0 <= (today - dt.date.fromisoformat(row[0])).days < LAST_N
-        ]
+    recent_rows = [
+        row
+        for row in rows
+        if window.lookback_start
+        <= trading_close_time(market, dt.date.fromisoformat(row[0]))
+        <= window.now
+    ]
     if not recent_rows:
         sys.stderr.write(
             f"Skipping {symbol} trading dollar data: no rows in {LAST_N} days\n"
@@ -518,27 +478,18 @@ def fetch_trading_dollar_fmp(
     symbol: str,
     description: str,
     api_key: str | None,
-    window: ScreeningWindow | None = None,
+    window: ScreeningWindow,
 ) -> Candidate:
-    from_date = (
-        window.request_start
-        if window is not None
-        else (
-            today_for_market(market) - dt.timedelta(days=LOOKBACK_DAYS - 1)
-        ).isoformat()
-    )
-    fmp_symbol = f"{symbol}{market.fmp_symbol_suffix}"
     data = cached_get_json(
-        f"{FMP_LEGACY_URL}/{fmp_symbol}" if market.fmp_legacy else FMP_STABLE_URL,
+        FMP_STABLE_URL,
         params=[
             ("apikey", api_key),
-            ("from", from_date),
-            *([("to", window.request_end)] if window is not None else []),
-            *([] if market.fmp_legacy else [("symbol", fmp_symbol)]),
+            ("from", window.request_start),
+            ("to", window.request_end),
+            ("symbol", symbol),
         ],
     )
-    rows = data.get("historical", []) if market.fmp_legacy else data
-    daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in rows]
+    daily_notionals = [(row["date"], row["vwap"] * row["volume"]) for row in data]
     return Candidate(
         symbol=symbol,
         description=description,
@@ -566,7 +517,7 @@ def fetch_trading_dollars_fmp(
     market: MarketConfig,
     stocks: Iterable[tuple[str, str]],
     api_key: str | None,
-    window: ScreeningWindow | None = None,
+    window: ScreeningWindow,
 ) -> list[Candidate]:
     sys.stderr.write("Fetching trading dollar data from FMP...\n")
     return [
@@ -646,24 +597,19 @@ def load_top_candidates(
     api_key: str | None,
     top_n_symbols: int,
     top_n_results: int,
-    window: ScreeningWindow | None = None,
+    window: ScreeningWindow,
 ) -> list[Candidate]:
     validate_candidate_pool_sizes(top_n_symbols, top_n_results)
-    if market.code != "j" and window is None:
-        raise ScreeningWindowError("US/Taiwan screening requires a screening window.")
 
     sys.stderr.write("Fetching symbols from TradingView...\n")
     stocks = fetch_symbols_from_tv(
         market=market,
         top_n_symbols=top_n_symbols,
-        sort_window=window.tv_sort_window
-        if window is not None
-        else getattr(config, "TV_SORT_WINDOW"),
+        sort_window=window.tv_sort_window,
     )
     sys.stderr.write(f"Found {len(stocks)} symbols\n")
 
     if market.liquidity_source == "finmind":
-        assert window is not None
         liquidity = fetch_trading_dollars_tw(market, stocks, window)
     else:
         liquidity = fetch_trading_dollars_fmp(market, stocks, api_key, window)
@@ -695,15 +641,8 @@ def score_all_valuations(
 def load_candidates() -> list[Candidate]:
     market = current_market_config()
     api_key = os.environ.get("FMP_API_KEY")
-    window = (
-        load_screening_window(market, LAST_N, api_key) if market.code != "j" else None
-    )
-    multiplier = (
-        window.candidate_pool_multiplier
-        if window is not None
-        else getattr(config, "CANDIDATE_POOL_MULTIPLIER")
-    )
-    pool_size = candidate_pool_size(RESULT_LIMIT, multiplier)
+    window = load_screening_window(market, LAST_N, api_key)
+    pool_size = candidate_pool_size(RESULT_LIMIT, window.candidate_pool_multiplier)
     candidates = load_top_candidates(
         market=market,
         api_key=api_key,
