@@ -170,10 +170,10 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             model="grok-test",
             tools=[],
             reasoning_effort="xhigh",
-            service_tier="default",
+            service_tier="priority",
         )
 
-    async def test_grok_priority_requests_priority_service_tier(self):
+    async def test_grok_priority_can_be_disabled(self):
         client = MagicMock()
         client.chat.create.return_value.sample = AsyncMock(
             return_value=types.SimpleNamespace(
@@ -182,7 +182,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await ranker.invoke_grok(
-            client, "grok-test", "Question", (), priority=True
+            client, "grok-test", "Question", (), priority=False
         )
 
         self.assertEqual(result, "Grok result")
@@ -190,7 +190,7 @@ class ProviderInvocationTests(unittest.IsolatedAsyncioTestCase):
             model="grok-test",
             tools=[],
             reasoning_effort="xhigh",
-            service_tier="priority",
+            service_tier="default",
         )
 
     async def test_grok_rejects_unsuccessful_response_results(self):
@@ -647,7 +647,7 @@ class InputParsingTests(unittest.TestCase):
 class PromptBuilderTests(unittest.TestCase):
     def test_build_analysis_question_for_each_criterion(self):
         for name, expected in (
-            ("moat", "What moats (durability of profitability) do they have?"),
+            ("moat", "How durable is the profitability of each?"),
             ("power", "What pricing powers (ability of raising prices) do they have?"),
         ):
             with self.subTest(criterion=name):
@@ -689,7 +689,7 @@ Grok answer
 
     def test_build_ranking_question(self):
         for name, expected in (
-            ("moat", "Rank them into 4 tiers by moat (durability of profitability)"),
+            ("moat", "Rank them into 4 tiers by durability of profitability"),
             (
                 "power",
                 "Rank them into 4 tiers by pricing power (ability of raising prices)",
@@ -725,8 +725,12 @@ Grok answer
 
 
 class ArgumentParsingTests(unittest.TestCase):
-    def test_grok_priority_is_opt_in(self):
-        for flags, expected in (([], False), (["--grok-priority"], True)):
+    def test_grok_priority_is_default_and_can_be_disabled(self):
+        for flags, expected in (
+            ([], True),
+            (["--grok-priority"], True),
+            (["--no-grok-priority"], False),
+        ):
             with self.subTest(flags=flags):
                 with patch.object(ranker.sys, "argv", ["ranker.py", "-p", *flags]):
                     self.assertEqual(ranker.parse_args().grok_priority, expected)
@@ -822,14 +826,14 @@ class PanelQueryTests(unittest.IsolatedAsyncioTestCase):
             clients.claude, "claude-test", "Question", history
         )
         invoke_grok.assert_awaited_once_with(
-            clients.grok, "grok-test", "Question", history, priority=False
+            clients.grok, "grok-test", "Question", history, priority=True
         )
 
-    async def test_panel_passes_priority_to_grok(self):
+    async def test_panel_can_disable_grok_priority(self):
         panel = ranker.Panel(
             models=ranker.Models("gpt-test", "gemini-test", "claude-test", "grok-test"),
             clients=make_panel_clients(),
-            grok_priority=True,
+            grok_priority=False,
         )
         with (
             patch.object(ranker, "invoke_gpt", new=AsyncMock(return_value="GPT")),
@@ -842,7 +846,7 @@ class PanelQueryTests(unittest.IsolatedAsyncioTestCase):
             await panel.query("Question")
 
         invoke_grok.assert_awaited_once_with(
-            panel.clients.grok, "grok-test", "Question", (), priority=True
+            panel.clients.grok, "grok-test", "Question", (), priority=False
         )
 
     async def test_panel_query_propagates_provider_failures(self):
@@ -1030,8 +1034,8 @@ class BatchWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     async def check_run_ranking(self, criterion_name, grok_priority):
         flags = ["-m"] if criterion_name == "moat" else ["-p"]
-        if grok_priority:
-            flags.append("--grok-priority")
+        if not grok_priority:
+            flags.append("--no-grok-priority")
         with patch.object(ranker.sys, "argv", ["ranker.py", *flags]):
             args = ranker.parse_args()
         models = ranker.Models(

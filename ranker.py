@@ -75,8 +75,8 @@ class Criterion:
 CRITERIA = {
     "moat": Criterion(
         name="moat",
-        analysis_question="What moats (durability of profitability) do they have?",
-        ranking_instruction="Rank them into 4 tiers by moat (durability of profitability)",
+        analysis_question="How durable is the profitability of each?",
+        ranking_instruction="Rank them into 4 tiers by durability of profitability",
     ),
     "power": Criterion(
         name="pricing power",
@@ -120,7 +120,7 @@ class Panel:
 
     models: Models
     clients: PanelClients
-    grok_priority: bool = False
+    grok_priority: bool = True
 
     async def query(
         self, question: str, history: Sequence[HistoryItem] = ()
@@ -235,7 +235,7 @@ async def invoke_grok(
     question: str,
     history: Sequence[HistoryItem],
     *,
-    priority: bool = False,
+    priority: bool = True,
 ) -> str:
     try:
         chat = client.chat.create(
@@ -420,8 +420,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--grok-priority",
-        action="store_true",
-        help="Request xAI priority processing for Grok (premium token pricing).",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use xAI priority processing for Grok (default; premium token pricing).",
     )
     return parser.parse_args()
 
